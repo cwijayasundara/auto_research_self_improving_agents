@@ -54,7 +54,7 @@ def _is_ollama_cloud(model_str: str, settings: Settings) -> bool:
 
 def create_llm(settings: Settings) -> BaseChatModel:
     """Create the LLM instance via init_chat_model (supports all providers)."""
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"max_tokens": 16384}
     model_str = settings.model
 
     if settings.model_base_url:
