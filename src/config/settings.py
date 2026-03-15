@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     evolution_state_dir: str = "evolution_state"
 
     # Memory compression
-    memory_token_budget: int = 2000
+    memory_token_budget: int = 1000
     compression_similarity_threshold: float = 0.7
 
     # Sub-agents
