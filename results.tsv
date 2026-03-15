@@ -8,3 +8,5 @@ trust-search-prompt	0.772	3	2	v4	discarded	Added prompt rules about trusting sea
 model-gpt4o	0.667	2	1	v4	discarded	Swapped gpt-5-mini for gpt-4o — older model performs worse on research tasks
 expand-tasks-5	0.744	3	2	v4	kept	Added 2 harder tasks (battery comparison, carbon capture) — new 5-task baseline
 max-tokens-16k	0.818	6	1	v3	kept	Set max_tokens=16384 to fix output truncation — scores jumped from 0.744 to 0.818 on 5 tasks
+search-news-topic	0.756	4	2	v4	discarded	Set topic="news" on Tavily search — biased too much toward news, missed technical sources
+dual-search-tools	0.772	7	3	v4	discarded	Added second news-focused search tool alongside general — added complexity, no improvement
