@@ -11,3 +11,4 @@ max-tokens-16k	0.818	6	1	v3	kept	Set max_tokens=16384 to fix output truncation �
 search-news-topic	0.756	4	2	v4	discarded	Set topic="news" on Tavily search — biased too much toward news, missed technical sources
 dual-search-tools	0.772	7	3	v4	discarded	Added second news-focused search tool alongside general — added complexity, no improvement
 memory-budget-1k	0.848	2	1	v1	kept	Reduced memory_token_budget from 2000 to 1000 — less context noise, new best score
+expand-tasks-7	0.832	3	2	v3	kept	Added 2 more tasks (gene therapy, autonomous vehicle regulation) — 7-task score very stable
