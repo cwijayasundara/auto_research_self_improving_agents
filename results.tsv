@@ -1,0 +1,6 @@
+commit	overall_score	skills_count	failure_skills	prompt_version	status	description
+baseline	0.333	0	1	v2	baseline	Pre-fix baseline: LangSmith traces overwrite local output
+fix-trace-fetch	0.780	3	2	v4	kept	Fix trace fetcher to skip empty outputs, preserve local trajectories
+search-10-results	0.733	5	1	v4	discarded	Increased search results from 5 to 10 — more noise than signal, scores dropped
+max-iter-30	0.608	3	3	v4	discarded	Increased MAX_AGENT_ITERATIONS from 20 to 30 — scores degraded, agent loses coherence with more steps
+enable-subagents	0.831	3	1	v4	kept	Enabled research+synthesis sub-agents — improved citation quality and final scores

@@ -1,0 +1,128 @@
+[project]
+name = "auto-research-self-improving-agents"
+version = "0.1.0"
+description = "Self-improving research agent combining autoresearch outer-loop optimization with inner-loop self-evolution (prompt optimization, skill learning, reflective memory, and failure-driven skill creation)"
+requires-python = ">=3.12"
+dependencies = [
+    "deepagents>=0.4.3",
+    "langchain>=0.3",
+    "langchain-openai>=1.1.10",
+    "langchain-tavily>=0.2.17",
+    "langgraph>=1.0.9",
+    "langsmith>=0.7.6",
+    "pydantic-settings>=2.13.1",
+    "python-dotenv>=1.2.1",
+]
+
+[project.optional-dependencies]
+ollama = ["langchain-ollama>=0.3"]
+anthropic = ["langchain-anthropic>=0.3"]
+google = ["langchain-google-genai>=2.0"]
+groq = ["langchain-groq>=0.3"]
+all-providers = [
+    "langchain-ollama>=0.3",
+    "langchain-anthropic>=0.3",
+    "langchain-google-genai>=2.0",
+    "langchain-groq>=0.3",
+]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.2",
+    "mypy>=1.19.1",
+]
+
+# ---- Ruff (linter + formatter) ----
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import sorting)
+    "N",    # pep8-naming
+    "UP",   # pyupgrade (modern Python)
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length handled by formatter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ---- Mypy (type checker) ----
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "pydantic_settings",
+    "deepagents",
+    "deepagents.*",
+    "langchain",
+    "langchain.*",
+    "langchain_core",
+    "langchain_core.*",
+    "langchain_openai",
+    "langchain_openai.*",
+    "langchain_ollama",
+    "langchain_ollama.*",
+    "langchain_anthropic",
+    "langchain_anthropic.*",
+    "langchain_tavily",
+    "langchain_tavily.*",
+    "langgraph",
+    "langgraph.*",
+    "langsmith",
+    "langsmith.*",
+]
+ignore_missing_imports = true
+
+# ---- Pytest ----
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests - fast, mocked dependencies",
+    "integration: Integration tests - real components",
+    "e2e: End-to-end tests",
+]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "-q",
+]
+
+# ---- Coverage ----
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]

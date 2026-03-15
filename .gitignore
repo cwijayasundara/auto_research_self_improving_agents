@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data (generated at runtime)
+memory/episodic/
+memory/semantic/
+prompts/
+traces/
+evolution_state/
+skills/
+
+# Keep task files and results
+!tasks/
+!results.tsv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+eval.log
