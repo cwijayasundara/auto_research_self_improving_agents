@@ -21,7 +21,16 @@ This is a combined autoresearch + self-evolving agent experiment. The system has
 
 ## The Two-Speed Loop
 
-LOOP FOREVER:
+The outer loop runs for a **bounded number of iterations** controlled by `MAX_OUTER_LOOP_ITERATIONS`
+(default: 5, configurable via env var). Each iteration consists of one inner-loop evolution run
+followed by one structural change attempt. The loop also stops early if a score target is reached
+or consecutive iterations show no improvement.
+
+```
+MAX_OUTER_LOOP_ITERATIONS = 5  (set in .env or src/config/settings.py)
+```
+
+LOOP (up to MAX_OUTER_LOOP_ITERATIONS times):
 
 ### Phase 1: Inner Loop (automatic self-evolution)
 
@@ -62,6 +71,13 @@ When the inner loop plateaus (check `evolution_state/plateau_report.md`):
    - If improved: keep the commit, log to `results.tsv`
    - If equal/worse: `git reset --hard` to previous best
 
+### Early stopping
+
+Stop the outer loop early (before reaching MAX_OUTER_LOOP_ITERATIONS) if:
+- **Score target reached**: avg_score >= 0.95 for 2 consecutive iterations
+- **No progress**: 3 consecutive outer-loop iterations where the best score doesn't improve
+- **All experiments exhausted**: you've tried tools, architecture, model, and search changes without improvement
+
 ## What you CAN modify
 
 - `src/agent/deep_agent.py` — agent construction, model selection, tool wiring
@@ -69,6 +85,7 @@ When the inner loop plateaus (check `evolution_state/plateau_report.md`):
 - `src/agent/subagents.py` — sub-agent definitions
 - `src/tools/` — add new tools, improve existing ones
 - `src/config/settings.py` — configuration options
+- `src/evolution/prompt_optimizer.py` — prompt validation guardrails (e.g. adding new drift patterns)
 - `tasks/research_tasks.json` — expand the evaluation dataset
 - `.env` — model selection, API keys, tuning parameters
 
@@ -91,23 +108,62 @@ commit	overall_score	skills_count	failure_skills	prompt_version	status	descripti
 ## Decision Protocol
 
 ```
-1. Run inner evolution: python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 5
-2. Read evolution_state/*.md
-3. If plateau was reached:
-   - If failures are prompt-related → inner loop handles it (skip)
-   - If failures are capability gaps → add new tools
-   - If failures are architectural → refactor agent structure
-   - If failures are model limitations → swap model
-   - If all scores are high → expand dataset with harder examples
-4. Make ONE structural change, commit, re-run inner loop
-5. If improved: keep. If not: git reset --hard
-6. Repeat forever.
+iteration = 0
+consecutive_no_improvement = 0
+consecutive_high_score = 0
+
+WHILE iteration < MAX_OUTER_LOOP_ITERATIONS:
+  1. Run inner evolution: python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 5
+  2. Read evolution_state/*.md
+  3. If plateau was reached:
+     - If failures are prompt-related → inner loop handles it (skip)
+     - If failures are capability gaps → add new tools
+     - If failures are architectural → refactor agent structure
+     - If failures are model limitations → swap model
+     - If all scores are high → expand dataset with harder examples
+  4. Make ONE structural change, commit, re-run inner loop
+  5. If improved: keep, log to results.tsv
+     If not: git reset --hard, log as discarded
+  6. Update counters:
+     - If score improved: consecutive_no_improvement = 0
+     - Else: consecutive_no_improvement += 1
+     - If avg_score >= 0.95: consecutive_high_score += 1
+     - Else: consecutive_high_score = 0
+  7. STOP EARLY if:
+     - consecutive_no_improvement >= 3
+     - consecutive_high_score >= 2
+  8. iteration += 1
+
+DONE — print final results summary from results.tsv
 ```
 
-## NEVER STOP
+## Autonomous Operation
 
-Once the experiment loop has begun, do NOT pause to ask the human if you should continue. The human expects you to work autonomously and indefinitely until manually stopped.
+Once the experiment loop has begun, do NOT pause to ask the human if you should continue.
+Work autonomously until one of the stopping conditions is met (max iterations, early stopping,
+or manual interruption). The loop is bounded — it WILL terminate.
 
 ## Simplicity criterion
 
 All else equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Removing something and getting equal or better results is a great outcome.
+
+## Known risks: prompt drift
+
+The inner loop's prompt optimizer can drift into generating prompts that break
+autonomous operation — e.g. prompts that tell the agent to ask the user for
+input, present menu options, or request clarification. This has happened before
+and caused the agent to stop producing reports.
+
+**Guardrails in place** (in `src/evolution/prompt_optimizer.py`):
+- `validate_prompt_autonomy()` checks every generated prompt against a set of
+  regex patterns that detect user-interaction language
+- If violations are found, the optimizer retries (up to 2 times), then falls
+  back to the current prompt rather than accepting a drifted prompt
+- The `METAPROMPT_TEMPLATE` explicitly instructs the LLM to never add user
+  interaction to the generated prompt
+
+**If the agent starts asking the user for input again**:
+1. Check the latest prompt version in `prompts/` — look for interaction patterns
+2. The fix is in the prompt, not the code. Reset to a known-good prompt version
+3. If new drift patterns appear, add them to `_AUTONOMY_VIOLATION_PATTERNS` in
+   `src/evolution/prompt_optimizer.py`

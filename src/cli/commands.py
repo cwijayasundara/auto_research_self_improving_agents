@@ -50,7 +50,16 @@ def cmd_evolve(settings: Settings, tasks_file: str, max_cycles: int) -> None:
     with open(tasks_path) as f:
         task_data = json.load(f)
 
-    tasks = task_data if isinstance(task_data, list) else task_data.get("tasks", [])
+    raw_tasks = task_data if isinstance(task_data, list) else task_data.get("tasks", [])
+    # Normalize: support both ["task string", ...] and [{"task": "..."}, ...]
+    tasks: list[str] = []
+    for t in raw_tasks:
+        if isinstance(t, str):
+            tasks.append(t)
+        elif isinstance(t, dict) and "task" in t:
+            tasks.append(t["task"])
+        else:
+            logger.warning("Skipping unrecognized task format: %s", type(t))
     if not tasks:
         print("No tasks found in file")
         sys.exit(1)

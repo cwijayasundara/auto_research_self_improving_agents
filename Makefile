@@ -1,40 +1,47 @@
 .PHONY: install dev lint format typecheck test test-cov run evolve prompts skills memory state
 
-install:
-	pip install -e .
+PYTHON := .venv/bin/python
+PIP := .venv/bin/pip
 
-dev:
-	pip install -e ".[dev]"
+venv:
+	python3 -m venv .venv
+	$(PIP) install --upgrade pip
+
+install: venv
+	$(PIP) install -e .
+
+dev: venv
+	$(PIP) install -e ".[dev]"
 
 lint:
-	ruff check src tests
+	$(PYTHON) -m ruff check src tests
 
 format:
-	ruff format src tests
+	$(PYTHON) -m ruff format src tests
 
 typecheck:
-	mypy src
+	$(PYTHON) -m mypy src
 
 test:
-	pytest tests/
+	$(PYTHON) -m pytest tests/
 
 test-cov:
-	pytest tests/ --cov --cov-report=term-missing
+	$(PYTHON) -m pytest tests/ --cov --cov-report=term-missing
 
 run:
-	python -m src run "$(TASK)"
+	$(PYTHON) -m src run "$(TASK)"
 
 evolve:
-	python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles $(or $(CYCLES),3)
+	$(PYTHON) -m src evolve --tasks-file tasks/research_tasks.json --max-cycles $(or $(CYCLES),3)
 
 prompts:
-	python -m src prompts
+	$(PYTHON) -m src prompts
 
 skills:
-	python -m src skills
+	$(PYTHON) -m src skills
 
 memory:
-	python -m src memory
+	$(PYTHON) -m src memory
 
 state:
-	python -m src state
+	$(PYTHON) -m src state

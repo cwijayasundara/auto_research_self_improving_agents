@@ -16,7 +16,9 @@ then signals the outer loop via evolution_state/plateau_report.md.
 """
 
 import logging
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -49,6 +51,10 @@ logger = logging.getLogger(__name__)
 MIN_IMPROVEMENT = 0.05
 PLATEAU_CYCLES = 2
 
+# Timeout per task (seconds). Prevents the pipeline from hanging if the agent
+# gets stuck (e.g. sub-agents looping, search API blocking).
+TASK_TIMEOUT_SECONDS = 300  # 5 minutes
+
 
 def _run_single_task(
     settings: Settings,
@@ -56,15 +62,61 @@ def _run_single_task(
     memory_store: MemoryStore,
     task: str,
 ) -> dict[str, Any]:
-    """Run the agent on a single task and return the result."""
+    """Run the agent on a single task and return the result.
+
+    Includes a timeout so a hung agent cannot block the entire pipeline.
+    Also captures basic timing metrics for the efficiency grader.
+    """
     agent = create_agent(settings, prompt_store, memory_store, task=task)
+    start = time.monotonic()
     try:
-        result = agent.invoke({"messages": [HumanMessage(content=task)]})
+        # Run with timeout using a thread pool
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                agent.invoke, {"messages": [HumanMessage(content=task)]}
+            )
+            try:
+                result = future.result(timeout=TASK_TIMEOUT_SECONDS)
+            except FuturesTimeoutError:
+                logger.error(
+                    "Agent timed out on task '%s' after %ds",
+                    task[:50], TASK_TIMEOUT_SECONDS,
+                )
+                return {
+                    "task": task,
+                    "output": f"TIMEOUT after {TASK_TIMEOUT_SECONDS}s",
+                    "status": "error",
+                    "latency": TASK_TIMEOUT_SECONDS,
+                }
+
         output = extract_output(result)
-        return {"task": task, "output": output, "status": "completed"}
+        latency = time.monotonic() - start
+
+        # Estimate steps and tokens from the result messages
+        messages = result.get("messages", [])
+        total_steps = len(messages)
+        # Rough token estimate: 4 chars per token
+        total_tokens = sum(
+            len(getattr(m, "content", "") or "") // 4 for m in messages
+        )
+
+        return {
+            "task": task,
+            "output": output,
+            "status": "completed",
+            "latency": latency,
+            "total_steps": total_steps,
+            "total_tokens": total_tokens,
+        }
     except Exception as exc:
         logger.error("Agent failed on task '%s': %s", task[:50], exc)
-        return {"task": task, "output": str(exc), "status": "error"}
+        latency = time.monotonic() - start
+        return {
+            "task": task,
+            "output": str(exc),
+            "status": "error",
+            "latency": latency,
+        }
 
 
 def build_orchestrator_graph(
@@ -103,11 +155,19 @@ def build_orchestrator_graph(
         trajectories = []
         for r in results:
             run_id = str(uuid.uuid4())
+            from src.tracing.trajectory import TrajectoryMetrics
+            metrics = TrajectoryMetrics(
+                total_tokens=r.get("total_tokens", 0),
+                total_steps=r.get("total_steps", 0),
+                latency_seconds=r.get("latency", 0.0),
+                tool_call_count=0,
+            )
             traj = Trajectory(
                 run_id=run_id,
                 task=r["task"],
                 output=r["output"],
                 status=r["status"],
+                metrics=metrics,
             )
             trajectories.append(traj)
 
@@ -130,16 +190,37 @@ def build_orchestrator_graph(
     def node_analyze(state: OrchestratorState) -> dict[str, Any]:
         """Analyze all trajectories through the grading pipeline."""
         logger.info("--- Analyze Trajectories ---")
+        trajectories = state["trajectories"]
+        if not trajectories:
+            logger.warning("No trajectories to analyze — run_batch may have failed")
+            return {"analysis_results": []}
+
         analyses: list[AnalysisResult] = []
-        for traj in state["trajectories"]:
-            analysis = analyze_trajectory(llm, traj)
+        for traj in trajectories:
+            try:
+                analysis = analyze_trajectory(llm, traj)
+            except Exception as exc:
+                logger.error("Grading failed for task '%s': %s", traj.task[:50], exc)
+                # Create a failed analysis so downstream nodes still have data
+                analysis = AnalysisResult(
+                    run_id=traj.run_id,
+                    task=traj.task,
+                    classification="failed",
+                    average_score=0.0,
+                    grader_results=[],
+                    output=traj.output,
+                    tool_calls=[],
+                )
             analyses.append(analysis)
 
             graders = analysis["grader_results"]
-            grader_summary = "  ".join(
-                f"{g['name']}={g['score']:.2f}({'PASS' if g['passed'] else 'FAIL'})"
-                for g in graders
-            )
+            if graders:
+                grader_summary = "  ".join(
+                    f"{g['name']}={g['score']:.2f}({'PASS' if g['passed'] else 'FAIL'})"
+                    for g in graders
+                )
+            else:
+                grader_summary = "(grading failed)"
             logger.info(
                 "  [%s] %s -> %s (avg=%.3f)  |  %s",
                 traj.run_id[:8], traj.task[:50],
@@ -159,21 +240,29 @@ def build_orchestrator_graph(
     def node_reflect(state: OrchestratorState) -> dict[str, Any]:
         """Run reflection on each trajectory and store memories."""
         logger.info("--- Reflect & Store Memories ---")
+        if not state["analysis_results"]:
+            logger.warning("No analysis results to reflect on")
+            return {}
         for analysis in state["analysis_results"]:
-            grader_dict = {
-                "average_score": analysis["average_score"],
-                "classification": analysis["classification"],
-                "graders": analysis["grader_results"],
-            }
-            reflect_and_store(
-                llm=llm,
-                memory_store=memory_store,
-                run_id=analysis["run_id"],
-                task=analysis["task"],
-                output=analysis["output"],
-                tool_calls=analysis["tool_calls"],
-                grader_results=grader_dict,
-            )
+            try:
+                grader_dict = {
+                    "average_score": analysis["average_score"],
+                    "classification": analysis["classification"],
+                    "graders": analysis["grader_results"],
+                }
+                reflect_and_store(
+                    llm=llm,
+                    memory_store=memory_store,
+                    run_id=analysis["run_id"],
+                    task=analysis["task"],
+                    output=analysis["output"],
+                    tool_calls=analysis["tool_calls"],
+                    grader_results=grader_dict,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Reflection failed for task '%s': %s", analysis["task"][:50], exc
+                )
         total_ep = memory_store.count("episodic")
         total_sem = memory_store.count("semantic")
         logger.info("Memory totals: %d episodic, %d semantic", total_ep, total_sem)
@@ -200,11 +289,17 @@ def build_orchestrator_graph(
         """Extract skills from successful trajectories."""
         logger.info("--- Extract Skills (from successes) ---")
         analyses = state["analysis_results"]
-        created = extract_skills_from_batch(llm, analyses, settings.skills_path)
-        if created:
-            for p in created:
-                logger.info("  NEW SKILL: %s", p.stem)
-        logger.info("Skills extracted this cycle: %d", len(created))
+        if not analyses:
+            logger.info("No analyses available for skill extraction")
+            return {}
+        try:
+            created = extract_skills_from_batch(llm, analyses, settings.skills_path)
+            if created:
+                for p in created:
+                    logger.info("  NEW SKILL: %s", p.stem)
+            logger.info("Skills extracted this cycle: %d", len(created))
+        except Exception as exc:
+            logger.error("Skill extraction failed: %s", exc)
         return {}
 
     def node_create_failure_skills(state: OrchestratorState) -> dict[str, Any]:
@@ -216,21 +311,31 @@ def build_orchestrator_graph(
         """
         logger.info("--- Create Failure Skills (from failures) ---")
         analyses = state["analysis_results"]
-        created = create_failure_skills_from_batch(llm, analyses, settings.skills_path)
-        if created:
-            for p in created:
-                logger.info("  NEW DEFENSIVE SKILL: %s", p.stem)
-        logger.info("Failure skills created this cycle: %d", len(created))
+        if not analyses:
+            logger.info("No analyses available for failure skill creation")
+            return {}
+        try:
+            created = create_failure_skills_from_batch(llm, analyses, settings.skills_path)
+            if created:
+                for p in created:
+                    logger.info("  NEW DEFENSIVE SKILL: %s", p.stem)
+            logger.info("Failure skills created this cycle: %d", len(created))
+        except Exception as exc:
+            logger.error("Failure skill creation failed: %s", exc)
         return {}
 
     def node_optimize_prompt(state: OrchestratorState) -> dict[str, Any]:
         """Optimize the prompt based on failure analysis (skill-aware)."""
         logger.info("--- Optimize Prompt (skill-aware) ---")
         old_version = prompt_store.get_latest_version_number()
-        new_version = optimize_prompt(
-            llm, prompt_store, state["analysis_results"],
-            skills_dir=settings.skills_path,
-        )
+        try:
+            new_version = optimize_prompt(
+                llm, prompt_store, state["analysis_results"],
+                skills_dir=settings.skills_path,
+            )
+        except Exception as exc:
+            logger.error("Prompt optimization failed: %s", exc)
+            new_version = old_version
         if new_version != old_version:
             new_prompt = prompt_store.get_current_prompt()
             logger.info(
@@ -245,12 +350,15 @@ def build_orchestrator_graph(
     def node_persist_state(state: OrchestratorState) -> dict[str, Any]:
         """Persist evolution state for the outer-loop coding agent."""
         logger.info("--- Persist Evolution State ---")
-        persist_evolution_state(
-            state_dir=settings.evolution_state_path,
-            skills_dir=settings.skills_path,
-            cycle_metrics=state.get("cycle_metrics", []),
-            analyses=state["analysis_results"],
-        )
+        try:
+            persist_evolution_state(
+                state_dir=settings.evolution_state_path,
+                skills_dir=settings.skills_path,
+                cycle_metrics=state.get("cycle_metrics", []),
+                analyses=state["analysis_results"],
+            )
+        except Exception as exc:
+            logger.error("Failed to persist evolution state: %s", exc)
         return {}
 
     def node_aggregate_metrics(state: OrchestratorState) -> dict[str, Any]:

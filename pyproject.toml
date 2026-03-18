@@ -5,7 +5,9 @@ description = "Self-improving research agent combining autoresearch outer-loop o
 requires-python = ">=3.12"
 dependencies = [
     "deepagents>=0.4.3",
+    "ddgs>=9.0",
     "langchain>=0.3",
+    "langchain-community>=0.4",
     "langchain-openai>=1.1.10",
     "langchain-tavily>=0.2.17",
     "langgraph>=1.0.9",

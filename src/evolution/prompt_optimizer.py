@@ -3,10 +3,14 @@
 Enhanced with skill-awareness: the optimizer can reference learned skills
 when generating improved prompts, creating tighter integration between
 the skill learning and prompt optimization loops.
+
+Includes validation guardrails to prevent prompt drift — e.g. the optimizer
+generating prompts that ask the user for input, breaking autonomous operation.
 """
 
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -18,6 +22,32 @@ from src.evolution.state import AnalysisResult
 from src.skills.manager import discover_skills
 
 logger = logging.getLogger(__name__)
+
+# Patterns that indicate the prompt drifted into asking for user interaction.
+# Each tuple is (compiled regex, human-readable description).
+_AUTONOMY_VIOLATION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"ask\s+(the\s+)?user", re.IGNORECASE), "asks the user"),
+    (re.compile(r"would you like", re.IGNORECASE), "asks 'would you like'"),
+    (re.compile(r"choose\s+(one|an option|from|between|\d)", re.IGNORECASE), "presents choices"),
+    (re.compile(r"select\s+(one|an option|from|\d)", re.IGNORECASE), "asks to select"),
+    (re.compile(r"(?:option|choice)\s*[123]\)?", re.IGNORECASE), "presents numbered options"),
+    (re.compile(r"please\s+(choose|select|pick|specify|clarify|confirm)", re.IGNORECASE), "requests user action"),
+    (re.compile(r"do you (?:want|prefer|need)", re.IGNORECASE), "asks user preference"),
+    (re.compile(r"let me know (?:if|which|what|how)", re.IGNORECASE), "requests user feedback"),
+    (re.compile(r"waiting for.*(?:input|response|reply)", re.IGNORECASE), "waits for input"),
+]
+
+
+def validate_prompt_autonomy(prompt: str) -> list[str]:
+    """Check a generated prompt for patterns that violate autonomous operation.
+
+    Returns a list of violation descriptions. Empty list means the prompt is safe.
+    """
+    violations: list[str] = []
+    for pattern, description in _AUTONOMY_VIOLATION_PATTERNS:
+        if pattern.search(prompt):
+            violations.append(description)
+    return violations
 
 
 def analyze_failures(analyses: list[AnalysisResult]) -> dict[str, Any]:
@@ -48,6 +78,9 @@ def analyze_failures(analyses: list[AnalysisResult]) -> dict[str, Any]:
     }
 
 
+MAX_AUTONOMY_RETRIES = 2
+
+
 def generate_improved_prompt(
     llm: BaseChatModel,
     current_prompt: str,
@@ -59,8 +92,12 @@ def generate_improved_prompt(
 
     Enhanced: includes a summary of available skills so the prompt
     can reference them for better integration.
+
+    Includes autonomy validation — if the generated prompt contains patterns
+    that would cause the agent to ask the user for input, it retries up to
+    MAX_AUTONOMY_RETRIES times, then falls back to the current prompt.
     """
-    prompt = METAPROMPT_TEMPLATE.format(
+    meta = METAPROMPT_TEMPLATE.format(
         current_prompt=current_prompt,
         current_score=f"{current_score:.3f}",
         failure_analysis=failure_info["failure_analysis"],
@@ -68,13 +105,29 @@ def generate_improved_prompt(
         available_skills=skills_summary or "No skills learned yet.",
     )
 
-    response = llm.invoke([HumanMessage(content=prompt)])
-    improved = response.content.strip()
+    for attempt in range(1 + MAX_AUTONOMY_RETRIES):
+        response = llm.invoke([HumanMessage(content=meta)])
+        improved = response.content.strip()
 
-    if "{memory_context}" not in improved:
-        improved += "\n{memory_context}"
+        if "{memory_context}" not in improved:
+            improved += "\n{memory_context}"
 
-    return improved
+        violations = validate_prompt_autonomy(improved)
+        if not violations:
+            return improved
+
+        logger.warning(
+            "Prompt autonomy violation (attempt %d/%d): %s",
+            attempt + 1, 1 + MAX_AUTONOMY_RETRIES, ", ".join(violations),
+        )
+
+    # All retries failed — keep the current prompt to avoid drift
+    logger.error(
+        "Prompt optimizer failed autonomy validation after %d attempts. "
+        "Keeping current prompt to prevent drift.",
+        1 + MAX_AUTONOMY_RETRIES,
+    )
+    return current_prompt
 
 
 def optimize_prompt(

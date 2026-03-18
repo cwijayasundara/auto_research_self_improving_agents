@@ -48,6 +48,7 @@ class Settings(BaseSettings):
 
     # Outer loop (autoresearch) settings
     outer_loop_enabled: bool = True
+    max_outer_loop_iterations: int = 5
     max_inner_cycles: int = 5
     min_improvement_threshold: float = 0.05
 

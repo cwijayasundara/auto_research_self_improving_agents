@@ -90,27 +90,13 @@ class TraceFetcher:
     def fetch_and_parse(self, limit: int = 10) -> list[Trajectory]:
         """Fetch recent runs and parse them into Trajectory models.
 
-        Only returns trajectories that have meaningful output. If LangSmith
-        traces lack output data (e.g. the agent framework doesn't persist
-        outputs to the trace), returns an empty list so the orchestrator
-        falls back to its local trajectories.
+        Returns an empty list so the orchestrator uses its local
+        trajectories, which have correct output and task data.
+        LangSmith traces from deepagents have empty/misformatted
+        outputs and mix in internal traces (prompt optimizer, skill
+        creator), producing worse grading results.
         """
-        runs = self.fetch_recent_runs(limit)
-        trajectories = []
-        for run_data in runs:
-            traj = self.parse_trajectory(run_data)
-            cache_path = self.cache_dir / f"{traj.run_id}.json"
-            with open(cache_path, "w") as f:
-                json.dump(run_data, f, indent=2)
-            if traj.output and traj.output.strip() not in ("", "{}", "None"):
-                trajectories.append(traj)
-            else:
-                logger.debug(
-                    "Skipping trace %s: empty or missing output", traj.run_id
-                )
-        if not trajectories:
-            logger.info(
-                "No traces with meaningful output found; "
-                "orchestrator will use local trajectories"
-            )
-        return trajectories
+        logger.info(
+            "Skipping LangSmith trace fetch; using local trajectories"
+        )
+        return []
