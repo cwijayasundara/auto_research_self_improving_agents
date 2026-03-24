@@ -18,7 +18,8 @@ then signals the outer loop via evolution_state/plateau_report.md.
 import logging
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -72,15 +73,14 @@ def _run_single_task(
     try:
         # Run with timeout using a thread pool
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(
-                agent.invoke, {"messages": [HumanMessage(content=task)]}
-            )
+            future = pool.submit(agent.invoke, {"messages": [HumanMessage(content=task)]})
             try:
                 result = future.result(timeout=TASK_TIMEOUT_SECONDS)
             except FuturesTimeoutError:
                 logger.error(
                     "Agent timed out on task '%s' after %ds",
-                    task[:50], TASK_TIMEOUT_SECONDS,
+                    task[:50],
+                    TASK_TIMEOUT_SECONDS,
                 )
                 return {
                     "task": task,
@@ -96,9 +96,7 @@ def _run_single_task(
         messages = result.get("messages", [])
         total_steps = len(messages)
         # Rough token estimate: 4 chars per token
-        total_tokens = sum(
-            len(getattr(m, "content", "") or "") // 4 for m in messages
-        )
+        total_tokens = sum(len(getattr(m, "content", "") or "") // 4 for m in messages)
 
         return {
             "task": task,
@@ -135,6 +133,7 @@ def build_orchestrator_graph(
     trace_fetcher = TraceFetcher(settings)
 
     from src.tools.search import create_search_tool
+
     try:
         search_tool = create_search_tool(settings)
     except Exception:
@@ -147,22 +146,32 @@ def build_orchestrator_graph(
         cycle = state["current_cycle"]
         logger.info("")
         logger.info("=" * 60)
-        logger.info("  CYCLE %d  |  Running %d tasks  |  prompt v%d",
-                     cycle, len(tasks), state.get("prompt_version", 0))
+        logger.info(
+            "  CYCLE %d  |  Running %d tasks  |  prompt v%d",
+            cycle,
+            len(tasks),
+            state.get("prompt_version", 0),
+        )
         logger.info("=" * 60)
 
         results = []
         for i, task in enumerate(tasks, 1):
             logger.info("[%d/%d] Running: %s", i, len(tasks), task[:80])
             result = _run_single_task(settings, prompt_store, memory_store, task)
-            logger.info("[%d/%d] Status: %s  (output: %d chars)",
-                        i, len(tasks), result["status"], len(result["output"]))
+            logger.info(
+                "[%d/%d] Status: %s  (output: %d chars)",
+                i,
+                len(tasks),
+                result["status"],
+                len(result["output"]),
+            )
             results.append(result)
 
         trajectories = []
         for r in results:
             run_id = str(uuid.uuid4())
             from src.tracing.trajectory import TrajectoryMetrics
+
             metrics = TrajectoryMetrics(
                 total_tokens=r.get("total_tokens", 0),
                 total_steps=r.get("total_steps", 0),
@@ -230,9 +239,11 @@ def build_orchestrator_graph(
                 grader_summary = "(grading failed)"
             logger.info(
                 "  [%s] %s -> %s (avg=%.3f)  |  %s",
-                traj.run_id[:8], traj.task[:50],
+                traj.run_id[:8],
+                traj.task[:50],
                 analysis["classification"].upper(),
-                analysis["average_score"], grader_summary,
+                analysis["average_score"],
+                grader_summary,
             )
 
         classifications = [a["classification"] for a in analyses]
@@ -267,9 +278,7 @@ def build_orchestrator_graph(
                     grader_results=grader_dict,
                 )
             except Exception as exc:
-                logger.error(
-                    "Reflection failed for task '%s': %s", analysis["task"][:50], exc
-                )
+                logger.error("Reflection failed for task '%s': %s", analysis["task"][:50], exc)
         total_ep = memory_store.count("episodic")
         total_sem = memory_store.count("semantic")
         logger.info("Memory totals: %d episodic, %d semantic", total_ep, total_sem)
@@ -288,7 +297,8 @@ def build_orchestrator_graph(
         )
         logger.info(
             "Compressed memories: %d semantic deduplicated, %d episodic consolidated",
-            deduped, consolidated,
+            deduped,
+            consolidated,
         )
         return {}
 
@@ -337,8 +347,12 @@ def build_orchestrator_graph(
         old_version = prompt_store.get_latest_version_number()
         try:
             new_version = optimize_prompt(
-                llm, prompt_store, state["analysis_results"],
+                llm,
+                prompt_store,
+                state["analysis_results"],
                 skills_dir=settings.skills_path,
+                settings=settings,
+                memory_store=memory_store,
             )
         except Exception as exc:
             logger.error("Prompt optimization failed: %s", exc)
@@ -347,7 +361,9 @@ def build_orchestrator_graph(
             new_prompt = prompt_store.get_current_prompt()
             logger.info(
                 "Prompt upgraded: v%d -> v%d (%d chars)",
-                old_version, new_version, len(new_prompt),
+                old_version,
+                new_version,
+                len(new_prompt),
             )
             logger.info("  Preview: %s...", new_prompt[:150].replace("\n", " "))
         else:
@@ -375,15 +391,10 @@ def build_orchestrator_graph(
         avg_score = sum(scores) / len(scores) if scores else 0.0
 
         from src.skills.manager import discover_skills
+
         all_skills = discover_skills(settings.skills_path)
-        success_skills = sum(
-            1 for sid in all_skills
-            if not sid.startswith(("avoid-", "handle-"))
-        )
-        failure_skills = sum(
-            1 for sid in all_skills
-            if sid.startswith(("avoid-", "handle-"))
-        )
+        success_skills = sum(1 for sid in all_skills if not sid.startswith(("avoid-", "handle-")))
+        failure_skills = sum(1 for sid in all_skills if sid.startswith(("avoid-", "handle-")))
 
         metrics = EvolutionMetrics(
             cycle=state["current_cycle"],
@@ -404,8 +415,7 @@ def build_orchestrator_graph(
         if len(cycle_metrics) >= PLATEAU_CYCLES + 1:
             recent = cycle_metrics[-PLATEAU_CYCLES:]
             improvements = [
-                recent[i]["avg_score"] - recent[i - 1]["avg_score"]
-                for i in range(1, len(recent))
+                recent[i]["avg_score"] - recent[i - 1]["avg_score"] for i in range(1, len(recent))
             ]
             if all(imp < MIN_IMPROVEMENT for imp in improvements):
                 logger.info("Plateau detected - stopping inner loop evolution")
@@ -431,18 +441,18 @@ def build_orchestrator_graph(
         logger.info(
             "  CYCLE %d COMPLETE  |  avg_score=%.3f%s  |  skills=%d (defensive=%d)  "
             "|  prompt=v%d  |  memories=%d",
-            state["current_cycle"], avg_score, delta_str,
-            success_skills, failure_skills,
+            state["current_cycle"],
+            avg_score,
+            delta_str,
+            success_skills,
+            failure_skills,
             state.get("prompt_version", 0),
             memory_store.count("episodic") + memory_store.count("semantic"),
         )
         if should_continue:
             logger.info("  -> Continuing to cycle %d", new_cycle)
         else:
-            reason = (
-                "plateau detected" if new_cycle < state["max_cycles"]
-                else "max cycles reached"
-            )
+            reason = "plateau detected" if new_cycle < state["max_cycles"] else "max cycles reached"
             logger.info("  -> Stopping (%s)", reason)
         logger.info("-" * 60)
 

@@ -25,12 +25,31 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "self-improving-agent"
 MAX_AGENT_ITERATIONS = 20
 
-_KNOWN_PROVIDERS = frozenset({
-    "openai", "anthropic", "ollama", "google_vertexai", "google_genai",
-    "azure_openai", "bedrock", "groq", "mistralai", "cohere", "deepseek",
-    "fireworks", "perplexity", "xai", "together", "huggingface", "nvidia",
-    "ibm", "upstage", "azure_ai", "google_anthropic_vertex",
-})
+_KNOWN_PROVIDERS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "ollama",
+        "google_vertexai",
+        "google_genai",
+        "azure_openai",
+        "bedrock",
+        "groq",
+        "mistralai",
+        "cohere",
+        "deepseek",
+        "fireworks",
+        "perplexity",
+        "xai",
+        "together",
+        "huggingface",
+        "nvidia",
+        "ibm",
+        "upstage",
+        "azure_ai",
+        "google_anthropic_vertex",
+    }
+)
 
 
 def _has_provider_prefix(model: str) -> bool:
@@ -62,9 +81,7 @@ def create_llm(settings: Settings) -> BaseChatModel:
 
     if _is_ollama_cloud(model_str, settings) and "base_url" not in kwargs:
         bare_model = (
-            model_str.split(":", maxsplit=1)[1]
-            if _has_provider_prefix(model_str)
-            else model_str
+            model_str.split(":", maxsplit=1)[1] if _has_provider_prefix(model_str) else model_str
         )
         kwargs["base_url"] = OLLAMA_CLOUD_BASE_URL
         kwargs["api_key"] = settings.ollama_api_key
@@ -110,7 +127,8 @@ def create_agent(
 
     memory_context = (
         build_memory_context(memory_store, task, token_budget=settings.memory_token_budget)
-        if task else ""
+        if task
+        else ""
     )
     prompt = prompt.format(memory_context=memory_context)
 
@@ -121,6 +139,7 @@ def create_agent(
     subagents = None
     if settings.use_subagents:
         from src.agent.subagents import build_research_subagent, build_synthesis_subagent
+
         subagents = [
             build_research_subagent(settings),
             build_synthesis_subagent(settings),
@@ -128,7 +147,10 @@ def create_agent(
 
     logger.info(
         "Creating agent '%s' with model=%s, tools=%d, skills=%d%s",
-        AGENT_NAME, settings.model, len(tools), len(skills_sources),
+        AGENT_NAME,
+        settings.model,
+        len(tools),
+        len(skills_sources),
         f", subagents={len(subagents)}" if subagents else "",
     )
 

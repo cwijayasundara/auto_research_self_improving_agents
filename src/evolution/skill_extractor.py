@@ -107,7 +107,9 @@ def extract_skills_from_batch(
     eligible = [a for a in analyses if a["average_score"] >= SKILL_EXTRACTION_THRESHOLD]
     logger.info(
         "Extracting skills from %d eligible trajectories (score >= %.2f) out of %d total",
-        len(eligible), SKILL_EXTRACTION_THRESHOLD, len(analyses),
+        len(eligible),
+        SKILL_EXTRACTION_THRESHOLD,
+        len(analyses),
     )
 
     created: list[Path] = []

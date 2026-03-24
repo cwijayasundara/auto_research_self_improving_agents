@@ -57,9 +57,7 @@ def _select_verifiable_claims(llm: BaseChatModel, claims: list[str]) -> list[str
         return claims[:2]
 
 
-def _check_single_claim(
-    llm: BaseChatModel, search_tool: BaseTool, claim: str
-) -> str | None:
+def _check_single_claim(llm: BaseChatModel, search_tool: BaseTool, claim: str) -> str | None:
     """Check a single claim against web search results.
 
     Returns verdict string ('corroborated', 'contradicted', 'inconclusive'),
@@ -77,10 +75,8 @@ def _check_single_claim(
 
     # Ask LLM to compare claim against search results
     try:
-        prompt = (
-            FACT_CHECK_PROMPT
-            .replace("{claim}", claim)
-            .replace("{search_results}", search_results[:3000])
+        prompt = FACT_CHECK_PROMPT.replace("{claim}", claim).replace(
+            "{search_results}", search_results[:3000]
         )
         response = llm.invoke([HumanMessage(content=prompt)])
         parsed = _parse_json_response(response.content)
@@ -103,9 +99,7 @@ def _compute_spot_check_score(verdicts: list[str]) -> float | None:
     return sum(VERDICT_SCORES.get(v, 0.5) for v in verdicts) / len(verdicts)
 
 
-def spot_check_claims(
-    llm: BaseChatModel, search_tool: BaseTool, claims: list[str]
-) -> float | None:
+def spot_check_claims(llm: BaseChatModel, search_tool: BaseTool, claims: list[str]) -> float | None:
     """Spot-check claims by searching the web for each.
 
     Args:

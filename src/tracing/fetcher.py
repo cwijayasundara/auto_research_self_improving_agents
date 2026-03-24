@@ -1,6 +1,5 @@
 """LangSmith trace fetcher."""
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -19,9 +18,7 @@ class TraceFetcher:
     def __init__(self, settings: Settings, cache_dir: Path | None = None) -> None:
         api_key = settings.resolved_api_key
         if not api_key:
-            logger.warning(
-                "No LangSmith API key set. Trace fetching will be skipped."
-            )
+            logger.warning("No LangSmith API key set. Trace fetching will be skipped.")
         self.client = Client(api_key=api_key or None)
         self.project_name = settings.langsmith_project
         self.cache_dir = cache_dir or (Path("traces"))
@@ -96,7 +93,5 @@ class TraceFetcher:
         outputs and mix in internal traces (prompt optimizer, skill
         creator), producing worse grading results.
         """
-        logger.info(
-            "Skipping LangSmith trace fetch; using local trajectories"
-        )
+        logger.info("Skipping LangSmith trace fetch; using local trajectories")
         return []

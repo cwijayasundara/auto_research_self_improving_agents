@@ -73,12 +73,14 @@ def persist_failure_analysis(
                 key = f"{grader['name']}:{grader['reasoning'][:50]}"
                 if key not in seen:
                     seen.add(key)
-                    issues.append({
-                        "grader": grader["name"],
-                        "score": f"{grader['score']:.3f}",
-                        "reasoning": grader["reasoning"],
-                        "task": analysis["task"][:100],
-                    })
+                    issues.append(
+                        {
+                            "grader": grader["name"],
+                            "score": f"{grader['score']:.3f}",
+                            "reasoning": grader["reasoning"],
+                            "task": analysis["task"][:100],
+                        }
+                    )
 
     for issue in issues[:15]:
         lines.append(f"### [{issue['grader']}] score={issue['score']}")
@@ -86,12 +88,14 @@ def persist_failure_analysis(
         lines.append(f"- **Issue**: {issue['reasoning']}")
         lines.append("")
 
-    lines.extend([
-        "## Recommendations for Coding Agent",
-        "",
-        "Based on the failure patterns above, consider:",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Recommendations for Coding Agent",
+            "",
+            "Based on the failure patterns above, consider:",
+            "",
+        ]
+    )
 
     # Generate recommendations based on which graders failed most
     grader_failures: dict[str, int] = {}
@@ -156,7 +160,7 @@ def persist_hypotheses(
             curr = cycle_metrics[i]["avg_score"]
             delta = curr - prev
             direction = "+" if delta >= 0 else ""
-            lines.append(f"- Cycle {i-1} -> {i}: {direction}{delta:.3f}")
+            lines.append(f"- Cycle {i - 1} -> {i}: {direction}{delta:.3f}")
 
     # Current state assessment
     lines.extend(["", "## Current Assessment", ""])
@@ -245,28 +249,30 @@ def persist_plateau_report(
         lines.append(f"- Memories stored: {latest['memories_stored']}")
         lines.append(f"- Cycles completed: {len(cycle_metrics)}")
 
-    lines.extend([
-        "",
-        "## What the Inner Loop Tried",
-        "",
-        "The inner loop exhausted these optimization levers:",
-        "- Prompt optimization (metaprompt-driven rewriting)",
-        "- Skill extraction from successful runs",
-        "- Defensive skill creation from failures",
-        "- Memory accumulation (episodic + semantic)",
-        "- Memory compression and deduplication",
-        "",
-        "## What the Outer Loop Should Try",
-        "",
-        "The coding agent should now consider structural changes:",
-        "- Adding new tools (capabilities the agent lacks)",
-        "- Changing the model or provider",
-        "- Modifying agent architecture (routing, multi-agent)",
-        "- Framework changes",
-        "- Expanding the evaluation dataset",
-        "",
-        "Read `failures.md` and `hypotheses.md` for detailed context.",
-    ])
+    lines.extend(
+        [
+            "",
+            "## What the Inner Loop Tried",
+            "",
+            "The inner loop exhausted these optimization levers:",
+            "- Prompt optimization (metaprompt-driven rewriting)",
+            "- Skill extraction from successful runs",
+            "- Defensive skill creation from failures",
+            "- Memory accumulation (episodic + semantic)",
+            "- Memory compression and deduplication",
+            "",
+            "## What the Outer Loop Should Try",
+            "",
+            "The coding agent should now consider structural changes:",
+            "- Adding new tools (capabilities the agent lacks)",
+            "- Changing the model or provider",
+            "- Modifying agent architecture (routing, multi-agent)",
+            "- Framework changes",
+            "- Expanding the evaluation dataset",
+            "",
+            "Read `failures.md` and `hypotheses.md` for detailed context.",
+        ]
+    )
 
     _write_markdown(state_dir / "plateau_report.md", "\n".join(lines))
     logger.info("Persisted plateau report — outer loop should take over")

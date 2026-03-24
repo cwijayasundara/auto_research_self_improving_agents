@@ -50,9 +50,7 @@ def classify_trajectory(grader_results: list[GraderResult]) -> tuple[str, float]
     return "failed", round(avg_score, 3)
 
 
-def build_analyzer_graph(
-    llm: BaseChatModel, search_tool: BaseTool | None = None
-) -> StateGraph:
+def build_analyzer_graph(llm: BaseChatModel, search_tool: BaseTool | None = None) -> StateGraph:
     """Build the trajectory analyzer as a LangGraph StateGraph.
 
     The four graders run in parallel from START, then converge on classify.
@@ -130,9 +128,7 @@ def analyze_trajectory(
         "task_completion": GraderResult(name="", score=0, passed=False, reasoning=""),
         "efficiency": GraderResult(name="", score=0, passed=False, reasoning=""),
         "quality": GraderResult(name="", score=0, passed=False, reasoning=""),
-        "claim_verification": GraderResult(
-            name="", score=0, passed=False, reasoning=""
-        ),
+        "claim_verification": GraderResult(name="", score=0, passed=False, reasoning=""),
         "classification": "",
         "average_score": 0.0,
     }

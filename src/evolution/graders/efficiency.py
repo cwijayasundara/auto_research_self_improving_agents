@@ -26,12 +26,8 @@ def _score_metric(value: float, ideal: float, acceptable: float) -> float:
 
 def grade_efficiency(metrics: TrajectoryMetrics) -> GraderResult:
     """Grade agent efficiency based on resource usage."""
-    token_score = _score_metric(
-        metrics.total_tokens, MAX_IDEAL_TOKENS, MAX_ACCEPTABLE_TOKENS
-    )
-    step_score = _score_metric(
-        metrics.total_steps, MAX_IDEAL_STEPS, MAX_ACCEPTABLE_STEPS
-    )
+    token_score = _score_metric(metrics.total_tokens, MAX_IDEAL_TOKENS, MAX_ACCEPTABLE_TOKENS)
+    step_score = _score_metric(metrics.total_steps, MAX_IDEAL_STEPS, MAX_ACCEPTABLE_STEPS)
     latency_score = _score_metric(
         metrics.latency_seconds, MAX_IDEAL_LATENCY, MAX_ACCEPTABLE_LATENCY
     )

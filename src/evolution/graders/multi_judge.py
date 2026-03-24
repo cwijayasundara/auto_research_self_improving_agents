@@ -14,10 +14,10 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from src.agent.prompts import (
-    QUALITY_PROMPT,
     Q_DEPTH_PROMPT,
     Q_RELEVANCE_PROMPT,
     Q_STRUCTURE_PROMPT,
+    QUALITY_PROMPT,
     TASK_COMPLETION_PROMPT,
     TC_ACCURACY_PROMPT,
     TC_COMPLETENESS_PROMPT,
@@ -55,9 +55,7 @@ def _run_single_judge(
         (None, error_msg) on exception.
     """
     try:
-        prompt = prompt_template.replace("{task}", task).replace(
-            "{output}", output[:4000]
-        )
+        prompt = prompt_template.replace("{task}", task).replace("{output}", output[:4000])
         response = llm.invoke([HumanMessage(content=prompt)])
         parsed = _parse_judge_response(response.content)
 
@@ -132,9 +130,7 @@ def _run_multi_judge(
         len(scores),
         len(judge_prompts),
     )
-    fallback_score, fallback_reasoning = _run_single_judge(
-        llm, fallback_prompt, task, output
-    )
+    fallback_score, fallback_reasoning = _run_single_judge(llm, fallback_prompt, task, output)
     if fallback_score is not None:
         return fallback_score, fallback_reasoning
 

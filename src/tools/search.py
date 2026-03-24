@@ -8,7 +8,7 @@ telling the agent to proceed with its existing knowledge.
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -67,7 +67,9 @@ class ResilientSearch(BaseTool):
                 if attempt < MAX_RETRIES:
                     logger.warning(
                         "Tavily search failed (attempt %d/%d): %s — retrying",
-                        attempt + 1, 1 + MAX_RETRIES, exc,
+                        attempt + 1,
+                        1 + MAX_RETRIES,
+                        exc,
                     )
                     time.sleep(RETRY_DELAY_SECONDS)
                 else:
@@ -88,7 +90,7 @@ class ResilientSearch(BaseTool):
     def _run(
         self,
         query: str,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
         **kwargs: Any,
     ) -> str:
         """Run search with Tavily -> DuckDuckGo fallback chain."""

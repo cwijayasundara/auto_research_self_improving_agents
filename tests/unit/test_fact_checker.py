@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.evolution.graders.fact_checker import (
-    VERDICT_SCORES,
     _check_single_claim,
     _compute_spot_check_score,
     _parse_json_response,
@@ -14,10 +13,10 @@ from src.evolution.graders.fact_checker import (
     spot_check_claims,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_json_response
 # ---------------------------------------------------------------------------
+
 
 class TestParseJsonResponse:
     def test_plain_json(self):
@@ -43,6 +42,7 @@ class TestParseJsonResponse:
 # _compute_spot_check_score
 # ---------------------------------------------------------------------------
 
+
 class TestComputeSpotCheckScore:
     def test_all_corroborated(self):
         verdicts = ["corroborated", "corroborated", "corroborated"]
@@ -67,6 +67,7 @@ class TestComputeSpotCheckScore:
 # ---------------------------------------------------------------------------
 # _select_verifiable_claims
 # ---------------------------------------------------------------------------
+
 
 class TestSelectVerifiableClaims:
     def test_happy_path(self):
@@ -102,6 +103,7 @@ class TestSelectVerifiableClaims:
 # _check_single_claim
 # ---------------------------------------------------------------------------
 
+
 class TestCheckSingleClaim:
     def test_corroborated_path(self):
         llm = MagicMock()
@@ -109,10 +111,12 @@ class TestCheckSingleClaim:
         search_tool._run.return_value = "Search result: GDP grew 3.2% in 2024 per BEA."
 
         llm.invoke.return_value = MagicMock(
-            content=json.dumps({
-                "verdict": "corroborated",
-                "reasoning": "BEA confirms the figure",
-            })
+            content=json.dumps(
+                {
+                    "verdict": "corroborated",
+                    "reasoning": "BEA confirms the figure",
+                }
+            )
         )
         result = _check_single_claim(llm, search_tool, "GDP grew by 3.2% in 2024")
         assert result == "corroborated"
@@ -141,10 +145,12 @@ class TestCheckSingleClaim:
         search_tool._run.return_value = "Some search results"
 
         llm.invoke.return_value = MagicMock(
-            content=json.dumps({
-                "verdict": "maybe",
-                "reasoning": "unclear",
-            })
+            content=json.dumps(
+                {
+                    "verdict": "maybe",
+                    "reasoning": "unclear",
+                }
+            )
         )
         result = _check_single_claim(llm, search_tool, "some claim")
         assert result == "inconclusive"
@@ -163,6 +169,7 @@ class TestCheckSingleClaim:
 # spot_check_claims (full pipeline)
 # ---------------------------------------------------------------------------
 
+
 class TestSpotCheckClaims:
     def test_no_claims_returns_none(self):
         llm = MagicMock()
@@ -176,9 +183,7 @@ class TestSpotCheckClaims:
         search_tool._run.side_effect = Exception("Search API down")
 
         # LLM call for claim selection
-        llm.invoke.return_value = MagicMock(
-            content='{"selected": ["claim A", "claim B"]}'
-        )
+        llm.invoke.return_value = MagicMock(content='{"selected": ["claim A", "claim B"]}')
 
         result = spot_check_claims(llm, search_tool, ["claim A", "claim B", "claim C"])
         assert result is None

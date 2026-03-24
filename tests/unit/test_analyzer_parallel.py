@@ -7,7 +7,6 @@ import pytest
 from src.evolution.analyzer import classify_trajectory
 from src.evolution.state import AnalyzerState, GraderResult
 
-
 # ---------------------------------------------------------------------------
 # AnalyzerState type hints
 # ---------------------------------------------------------------------------
@@ -16,9 +15,7 @@ from src.evolution.state import AnalyzerState, GraderResult
 class TestAnalyzerStateSchema:
     def test_has_claim_verification_field(self):
         hints = get_type_hints(AnalyzerState)
-        assert "claim_verification" in hints, (
-            "AnalyzerState should have a claim_verification field"
-        )
+        assert "claim_verification" in hints, "AnalyzerState should have a claim_verification field"
 
     def test_claim_verification_type_is_grader_result(self):
         hints = get_type_hints(AnalyzerState)
@@ -110,11 +107,11 @@ class TestClaimVerificationInAverage:
         _, avg_without = classify_trajectory(base)
 
         # With high claim_verification (4 graders)
-        with_high = base + [_make_grader("claim_verification", 1.0, True)]
+        with_high = [*base, _make_grader("claim_verification", 1.0, True)]
         _, avg_with_high = classify_trajectory(with_high)
 
         # With low claim_verification (4 graders)
-        with_low = base + [_make_grader("claim_verification", 0.0, False)]
+        with_low = [*base, _make_grader("claim_verification", 0.0, False)]
         _, avg_with_low = classify_trajectory(with_low)
 
         # The averages should differ

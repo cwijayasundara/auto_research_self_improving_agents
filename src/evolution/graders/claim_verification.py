@@ -50,19 +50,15 @@ def _extract_claims(llm: BaseChatModel, output: str) -> list[str]:
         return []
 
 
-def _verify_claims(
-    llm: BaseChatModel, claims: list[str], output: str
-) -> list[dict]:
+def _verify_claims(llm: BaseChatModel, claims: list[str], output: str) -> list[dict]:
     """Verify each claim against the source output via LLM.
 
     Returns list of verdict dicts, or [] on failure.
     """
     try:
         claims_text = "\n".join(f"- {c}" for c in claims)
-        prompt = (
-            CLAIM_VERIFICATION_PROMPT
-            .replace("{claims}", claims_text)
-            .replace("{output}", output[:4000])
+        prompt = CLAIM_VERIFICATION_PROMPT.replace("{claims}", claims_text).replace(
+            "{output}", output[:4000]
         )
         response = llm.invoke([HumanMessage(content=prompt)])
         parsed = _parse_json_response(response.content)

@@ -66,9 +66,7 @@ class MemoryStore:
         query_terms = query.lower().split()
         results = []
         for memory in self.list_all(namespace):
-            text = " ".join(
-                str(v).lower() for v in memory.values() if isinstance(v, str)
-            )
+            text = " ".join(str(v).lower() for v in memory.values() if isinstance(v, str))
             score = sum(1 for term in query_terms if term in text)
             if score > 0:
                 results.append({**memory, "_relevance_score": score})

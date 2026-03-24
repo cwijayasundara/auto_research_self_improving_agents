@@ -61,9 +61,7 @@ def _group_failures_by_pattern(
             continue
 
         # Find the worst-performing grader as the primary failure signal
-        failed_graders = [
-            g for g in analysis["grader_results"] if not g["passed"]
-        ]
+        failed_graders = [g for g in analysis["grader_results"] if not g["passed"]]
         if not failed_graders:
             continue
 
@@ -102,8 +100,7 @@ def _extract_failure_patterns(analyses: list[AnalysisResult]) -> str:
         for grader in analysis["grader_results"]:
             if not grader["passed"]:
                 pattern = (
-                    f"[{grader['name']}] score={grader['score']:.2f}: "
-                    f"{grader['reasoning'][:150]}"
+                    f"[{grader['name']}] score={grader['score']:.2f}: {grader['reasoning'][:150]}"
                 )
                 if pattern not in patterns:
                     patterns.append(pattern)
@@ -147,7 +144,9 @@ def create_failure_skill(
     parsed = _parse_failure_skill_response(response.content)
 
     if not parsed.get("name") or not parsed.get("content"):
-        logger.warning("Failure skill creation returned incomplete data for pattern '%s'", pattern_name)
+        logger.warning(
+            "Failure skill creation returned incomplete data for pattern '%s'", pattern_name
+        )
         return None
 
     skill_name = parsed["name"]
@@ -172,7 +171,9 @@ def create_failure_skill(
 
     logger.info(
         "Created defensive skill '%s' from %d failures (pattern: %s)",
-        skill_name, len(failure_group), pattern_name,
+        skill_name,
+        len(failure_group),
+        pattern_name,
     )
     return skill_path
 
@@ -199,7 +200,9 @@ def create_failure_skills_from_batch(
     }
 
     if not eligible_groups:
-        logger.info("No failure patterns meet threshold (%d+ failures required)", MIN_FAILURES_FOR_SKILL)
+        logger.info(
+            "No failure patterns meet threshold (%d+ failures required)", MIN_FAILURES_FOR_SKILL
+        )
         return []
 
     logger.info(

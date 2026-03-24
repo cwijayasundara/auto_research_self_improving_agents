@@ -6,7 +6,6 @@ to prevent unbounded memory growth across evolution cycles.
 
 import logging
 import uuid
-from datetime import UTC, datetime
 
 from src.memory.store import MemoryStore
 
@@ -79,9 +78,8 @@ def consolidate_episodic(
             summary = mem.get("summary", mem.get("task", str(mem.get("_key", ""))))
             summaries.append(summary)
 
-        consolidated_summary = (
-            f"Consolidated {len(group)} episodes from {date_key}: "
-            + "; ".join(summaries)
+        consolidated_summary = f"Consolidated {len(group)} episodes from {date_key}: " + "; ".join(
+            summaries
         )
 
         for mem in group:
@@ -103,7 +101,8 @@ def consolidate_episodic(
     if consolidated_count:
         logger.info(
             "Consolidated %d old episodic memories into %d summaries",
-            consolidated_count, len(groups),
+            consolidated_count,
+            len(groups),
         )
     return consolidated_count
 

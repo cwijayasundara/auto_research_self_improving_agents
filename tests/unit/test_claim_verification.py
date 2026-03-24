@@ -13,10 +13,10 @@ from src.evolution.graders.claim_verification import (
     grade_claims,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_json_response
 # ---------------------------------------------------------------------------
+
 
 class TestParseJsonResponse:
     def test_plain_json(self):
@@ -42,6 +42,7 @@ class TestParseJsonResponse:
 # _compute_consistency_score
 # ---------------------------------------------------------------------------
 
+
 class TestComputeConsistencyScore:
     def test_all_supported(self):
         verdicts = [
@@ -66,6 +67,7 @@ class TestComputeConsistencyScore:
 # ---------------------------------------------------------------------------
 # _extract_claims
 # ---------------------------------------------------------------------------
+
 
 class TestExtractClaims:
     def test_happy_path(self):
@@ -95,15 +97,14 @@ class TestExtractClaims:
 # _verify_claims
 # ---------------------------------------------------------------------------
 
+
 class TestVerifyClaims:
     def test_happy_path(self):
         llm = MagicMock()
         verdicts = [
             {"claim": "The sky is blue", "verdict": "supported", "reasoning": "cited"},
         ]
-        llm.invoke.return_value = MagicMock(
-            content=json.dumps({"verdicts": verdicts})
-        )
+        llm.invoke.return_value = MagicMock(content=json.dumps({"verdicts": verdicts}))
         result = _verify_claims(llm, ["The sky is blue"], "The sky is blue per NASA.")
         assert len(result) == 1
         assert result[0]["verdict"] == "supported"
@@ -125,22 +126,23 @@ class TestVerifyClaims:
 # grade_claims (full pipeline)
 # ---------------------------------------------------------------------------
 
+
 class TestGradeClaims:
     def test_full_pipeline(self):
         llm = MagicMock()
         # First call: extract claims
         llm.invoke.side_effect = [
-            MagicMock(
-                content='{"claims": ["claim A", "claim B"]}'
-            ),
+            MagicMock(content='{"claims": ["claim A", "claim B"]}'),
             # Second call: verify claims
             MagicMock(
-                content=json.dumps({
-                    "verdicts": [
-                        {"claim": "claim A", "verdict": "supported", "reasoning": "ok"},
-                        {"claim": "claim B", "verdict": "supported", "reasoning": "ok"},
-                    ]
-                })
+                content=json.dumps(
+                    {
+                        "verdicts": [
+                            {"claim": "claim A", "verdict": "supported", "reasoning": "ok"},
+                            {"claim": "claim B", "verdict": "supported", "reasoning": "ok"},
+                        ]
+                    }
+                )
             ),
         ]
         result = grade_claims(llm, "task", "output text")
@@ -170,15 +172,15 @@ class TestGradeClaims:
         # consistency = 1.0 (all supported), spot_check = 0.5
         # final = 0.6 * 1.0 + 0.4 * 0.5 = 0.8
         llm.invoke.side_effect = [
+            MagicMock(content='{"claims": ["claim A"]}'),
             MagicMock(
-                content='{"claims": ["claim A"]}'
-            ),
-            MagicMock(
-                content=json.dumps({
-                    "verdicts": [
-                        {"claim": "claim A", "verdict": "supported", "reasoning": "ok"},
-                    ]
-                })
+                content=json.dumps(
+                    {
+                        "verdicts": [
+                            {"claim": "claim A", "verdict": "supported", "reasoning": "ok"},
+                        ]
+                    }
+                )
             ),
         ]
         result = grade_claims(llm, "task", "output", spot_check_score=0.5)
@@ -188,17 +190,17 @@ class TestGradeClaims:
     def test_low_score_fails(self):
         llm = MagicMock()
         llm.invoke.side_effect = [
+            MagicMock(content='{"claims": ["claim A", "claim B", "claim C"]}'),
             MagicMock(
-                content='{"claims": ["claim A", "claim B", "claim C"]}'
-            ),
-            MagicMock(
-                content=json.dumps({
-                    "verdicts": [
-                        {"claim": "claim A", "verdict": "contradicted", "reasoning": "x"},
-                        {"claim": "claim B", "verdict": "unsupported", "reasoning": "x"},
-                        {"claim": "claim C", "verdict": "unsupported", "reasoning": "x"},
-                    ]
-                })
+                content=json.dumps(
+                    {
+                        "verdicts": [
+                            {"claim": "claim A", "verdict": "contradicted", "reasoning": "x"},
+                            {"claim": "claim B", "verdict": "unsupported", "reasoning": "x"},
+                            {"claim": "claim C", "verdict": "unsupported", "reasoning": "x"},
+                        ]
+                    }
+                )
             ),
         ]
         result = grade_claims(llm, "task", "output")

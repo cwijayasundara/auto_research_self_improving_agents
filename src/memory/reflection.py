@@ -104,6 +104,8 @@ def reflect_and_store(
 
     logger.info(
         "Reflection stored: %d facts, %d patterns for run %s",
-        len(facts), len(patterns), run_id,
+        len(facts),
+        len(patterns),
+        run_id,
     )
     return reflection

@@ -1,9 +1,6 @@
 """Tests for multi-judge grading system."""
 
-import json
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from src.evolution.graders.multi_judge import (
     _aggregate_judge_scores,
@@ -13,10 +10,10 @@ from src.evolution.graders.multi_judge import (
     multi_judge_task_completion,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_judge_response
 # ---------------------------------------------------------------------------
+
 
 class TestParseJudgeResponse:
     def test_plain_json(self):
@@ -43,24 +40,19 @@ class TestParseJudgeResponse:
 # _aggregate_judge_scores
 # ---------------------------------------------------------------------------
 
+
 class TestAggregateJudgeScores:
     def test_median_of_three(self):
-        score, reasoning = _aggregate_judge_scores(
-            [0.9, 0.7, 0.8], ["a", "b", "c"]
-        )
+        score, _reasoning = _aggregate_judge_scores([0.9, 0.7, 0.8], ["a", "b", "c"])
         assert score == 0.8
 
     def test_low_agreement_flag(self):
-        score, reasoning = _aggregate_judge_scores(
-            [0.3, 0.9, 0.6], ["low", "high", "mid"]
-        )
+        score, reasoning = _aggregate_judge_scores([0.3, 0.9, 0.6], ["low", "high", "mid"])
         assert score == 0.6
         assert "low_agreement" in reasoning
 
     def test_high_agreement_no_flag(self):
-        score, reasoning = _aggregate_judge_scores(
-            [0.8, 0.85, 0.82], ["a", "b", "c"]
-        )
+        score, reasoning = _aggregate_judge_scores([0.8, 0.85, 0.82], ["a", "b", "c"])
         assert score == 0.82
         assert "low_agreement" not in reasoning
 
@@ -79,12 +71,11 @@ class TestAggregateJudgeScores:
 # _run_single_judge
 # ---------------------------------------------------------------------------
 
+
 class TestRunSingleJudge:
     def test_happy_path(self):
         llm = MagicMock()
-        llm.invoke.return_value = MagicMock(
-            content='{"score": 0.85, "reasoning": "well done"}'
-        )
+        llm.invoke.return_value = MagicMock(content='{"score": 0.85, "reasoning": "well done"}')
         score, reasoning = _run_single_judge(
             llm, "Judge: {task}\n{output}", "test task", "test output"
         )
@@ -93,9 +84,7 @@ class TestRunSingleJudge:
 
     def test_parse_error_no_score_key(self):
         llm = MagicMock()
-        llm.invoke.return_value = MagicMock(
-            content='{"reasoning": "no score here"}'
-        )
+        llm.invoke.return_value = MagicMock(content='{"reasoning": "no score here"}')
         score, reasoning = _run_single_judge(
             llm, "Judge: {task}\n{output}", "test task", "test output"
         )
@@ -113,9 +102,7 @@ class TestRunSingleJudge:
 
     def test_output_truncated_to_4000(self):
         llm = MagicMock()
-        llm.invoke.return_value = MagicMock(
-            content='{"score": 0.8, "reasoning": "ok"}'
-        )
+        llm.invoke.return_value = MagicMock(content='{"score": 0.8, "reasoning": "ok"}')
         long_output = "x" * 10000
         _run_single_judge(llm, "{task}\n{output}", "task", long_output)
         call_args = llm.invoke.call_args[0][0][0].content
@@ -126,6 +113,7 @@ class TestRunSingleJudge:
 # ---------------------------------------------------------------------------
 # multi_judge_task_completion
 # ---------------------------------------------------------------------------
+
 
 class TestMultiJudgeTaskCompletion:
     def test_returns_grader_result_structure(self):
@@ -187,6 +175,7 @@ class TestMultiJudgeTaskCompletion:
 # ---------------------------------------------------------------------------
 # multi_judge_quality
 # ---------------------------------------------------------------------------
+
 
 class TestMultiJudgeQuality:
     def test_returns_grader_result_structure(self):

@@ -165,7 +165,7 @@ TC_COMPLETENESS_PROMPT = (
     "- 0.2: Only touches topic superficially, major aspects missing\n\n"
     "Focus primarily on coverage of all aspects of the question. "
     "Other quality dimensions are handled by other judges -- "
-    'your job is only COMPLETENESS.\n\n'
+    "your job is only COMPLETENESS.\n\n"
     'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
 )
 
@@ -179,7 +179,7 @@ TC_EVIDENCE_PROMPT = (
     "- 0.2: No sources cited, or sources are fabricated/irrelevant\n\n"
     "Focus primarily on whether claims are backed by cited sources. "
     "Other quality dimensions are handled by other judges -- "
-    'your job is only EVIDENCE.\n\n'
+    "your job is only EVIDENCE.\n\n"
     'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
 )
 
@@ -193,7 +193,7 @@ TC_ACCURACY_PROMPT = (
     "- 0.2: Contains clear factual errors, contradictions, or fabricated information\n\n"
     "Focus primarily on factual correctness and reasoning quality. "
     "Other quality dimensions are handled by other judges -- "
-    'your job is only ACCURACY.\n\n'
+    "your job is only ACCURACY.\n\n"
     'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
 )
 
@@ -207,7 +207,7 @@ Q_STRUCTURE_PROMPT = (
     "- 0.2: No clear structure, wall of text, hard to follow\n\n"
     "Focus primarily on organization, readability, formatting. "
     "Other quality dimensions are handled by other judges -- "
-    'your job is only STRUCTURE.\n\n'
+    "your job is only STRUCTURE.\n\n"
     'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
 )
 
@@ -221,7 +221,7 @@ Q_DEPTH_PROMPT = (
     "- 0.2: Shallow or repetitive, no real analysis beyond restating the obvious\n\n"
     "Focus primarily on thoroughness of analysis, nuance, trade-offs. "
     "Other quality dimensions are handled by other judges -- "
-    'your job is only DEPTH.\n\n'
+    "your job is only DEPTH.\n\n"
     'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
 )
 
@@ -235,7 +235,7 @@ Q_RELEVANCE_PROMPT = (
     "- 0.2: Significant off-topic content, filler, or answers a different question\n\n"
     "Focus primarily on staying on-topic, no filler or tangents. "
     "Other quality dimensions are handled by other judges -- "
-    'your job is only RELEVANCE.\n\n'
+    "your job is only RELEVANCE.\n\n"
     'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
 )
 
@@ -300,4 +300,16 @@ FACT_CHECK_PROMPT = (
     "## Search Results\n{search_results}\n\n"
     'Respond as JSON: {"verdict": "corroborated|contradicted|inconclusive", '
     '"reasoning": "brief explanation"}'
+)
+
+# --- Pairwise Comparison Prompt ---
+
+PAIRWISE_COMPARISON_PROMPT = (
+    "You are comparing two research outputs for the same task. Determine which "
+    "output is better overall (more complete, accurate, well-sourced, and clear).\n\n"
+    "## Task\n{task}\n\n"
+    "## Output A\n{output_a}\n\n"
+    "## Output B\n{output_b}\n\n"
+    'Respond as JSON: {"winner": "A" or "B", '
+    '"confidence": "high|medium|low", "reasoning": "brief explanation"}'
 )

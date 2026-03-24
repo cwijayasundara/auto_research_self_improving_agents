@@ -28,6 +28,7 @@ def cmd_run(settings: Settings, task: str) -> None:
 
     if prompt_store.get_latest_version_number() == 0:
         from src.agent.prompts import DEFAULT_SYSTEM_PROMPT
+
         prompt_store.add_version(DEFAULT_SYSTEM_PROMPT, score=None)
 
     agent = create_agent(settings, prompt_store, memory_store, task=task)
@@ -179,12 +180,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # evolve
     evolve_parser = subparsers.add_parser("evolve", help="Run inner-loop evolution")
-    evolve_parser.add_argument(
-        "--tasks-file", required=True, help="Path to tasks JSON file"
-    )
-    evolve_parser.add_argument(
-        "--max-cycles", type=int, default=3, help="Maximum evolution cycles"
-    )
+    evolve_parser.add_argument("--tasks-file", required=True, help="Path to tasks JSON file")
+    evolve_parser.add_argument("--max-cycles", type=int, default=3, help="Maximum evolution cycles")
 
     # prompts
     subparsers.add_parser("prompts", help="Show prompt version history")
