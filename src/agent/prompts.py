@@ -155,6 +155,90 @@ QUALITY_PROMPT = (
     "- reasoning: brief explanation"
 )
 
+TC_COMPLETENESS_PROMPT = (
+    "You are judging a research agent's output from the perspective of COMPLETENESS.\n\n"
+    "## Task\n{task}\n\n"
+    "## Agent Output\n{output}\n\n"
+    "## Scoring Guide\n"
+    "- 0.9: Covers all aspects and subtopics, no significant gaps\n"
+    "- 0.5: Addresses main question but misses 1-2 important subtopics\n"
+    "- 0.2: Only touches topic superficially, major aspects missing\n\n"
+    "Focus primarily on coverage of all aspects of the question. "
+    "Other quality dimensions are handled by other judges -- "
+    'your job is only COMPLETENESS.\n\n'
+    'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
+)
+
+TC_EVIDENCE_PROMPT = (
+    "You are judging a research agent's output from the perspective of EVIDENCE.\n\n"
+    "## Task\n{task}\n\n"
+    "## Agent Output\n{output}\n\n"
+    "## Scoring Guide\n"
+    "- 0.9: 3+ claims backed by cited sources with URLs or named references\n"
+    "- 0.5: Some claims sourced but others stated without evidence\n"
+    "- 0.2: No sources cited, or sources are fabricated/irrelevant\n\n"
+    "Focus primarily on whether claims are backed by cited sources. "
+    "Other quality dimensions are handled by other judges -- "
+    'your job is only EVIDENCE.\n\n'
+    'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
+)
+
+TC_ACCURACY_PROMPT = (
+    "You are judging a research agent's output from the perspective of ACCURACY.\n\n"
+    "## Task\n{task}\n\n"
+    "## Agent Output\n{output}\n\n"
+    "## Scoring Guide\n"
+    "- 0.9: All facts appear correct, reasoning is sound, no contradictions\n"
+    "- 0.5: Mostly accurate but contains 1-2 questionable claims or minor errors\n"
+    "- 0.2: Contains clear factual errors, contradictions, or fabricated information\n\n"
+    "Focus primarily on factual correctness and reasoning quality. "
+    "Other quality dimensions are handled by other judges -- "
+    'your job is only ACCURACY.\n\n'
+    'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
+)
+
+Q_STRUCTURE_PROMPT = (
+    "You are judging a research agent's output from the perspective of STRUCTURE.\n\n"
+    "## Task\n{task}\n\n"
+    "## Agent Output\n{output}\n\n"
+    "## Scoring Guide\n"
+    "- 0.9: Clear sections with headings, logical flow, easy to scan and read\n"
+    "- 0.5: Some structure but inconsistent formatting or unclear organization\n"
+    "- 0.2: No clear structure, wall of text, hard to follow\n\n"
+    "Focus primarily on organization, readability, formatting. "
+    "Other quality dimensions are handled by other judges -- "
+    'your job is only STRUCTURE.\n\n'
+    'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
+)
+
+Q_DEPTH_PROMPT = (
+    "You are judging a research agent's output from the perspective of DEPTH.\n\n"
+    "## Task\n{task}\n\n"
+    "## Agent Output\n{output}\n\n"
+    "## Scoring Guide\n"
+    "- 0.9: Thorough analysis covering nuances, trade-offs, and multiple perspectives\n"
+    "- 0.5: Addresses topic but stays surface-level, lacks nuance\n"
+    "- 0.2: Shallow or repetitive, no real analysis beyond restating the obvious\n\n"
+    "Focus primarily on thoroughness of analysis, nuance, trade-offs. "
+    "Other quality dimensions are handled by other judges -- "
+    'your job is only DEPTH.\n\n'
+    'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
+)
+
+Q_RELEVANCE_PROMPT = (
+    "You are judging a research agent's output from the perspective of RELEVANCE.\n\n"
+    "## Task\n{task}\n\n"
+    "## Agent Output\n{output}\n\n"
+    "## Scoring Guide\n"
+    "- 0.9: Every paragraph directly serves the task, no tangents or filler\n"
+    "- 0.5: Mostly on-topic but includes some tangential content or padding\n"
+    "- 0.2: Significant off-topic content, filler, or answers a different question\n\n"
+    "Focus primarily on staying on-topic, no filler or tangents. "
+    "Other quality dimensions are handled by other judges -- "
+    'your job is only RELEVANCE.\n\n'
+    'Respond as JSON: {"score": float 0.0-1.0, "reasoning": "brief explanation"}'
+)
+
 RESEARCH_SUBAGENT_PROMPT = (
     "You are a research sub-agent. Your sole responsibility is to perform "
     "web searches and gather raw information on a given topic.\n\n"

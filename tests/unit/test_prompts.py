@@ -1,6 +1,16 @@
 """Tests for grading prompt rubric anchors."""
 
+import pytest
+
 from src.agent.prompts import TASK_COMPLETION_PROMPT, QUALITY_PROMPT
+from src.agent.prompts import (
+    TC_COMPLETENESS_PROMPT,
+    TC_EVIDENCE_PROMPT,
+    TC_ACCURACY_PROMPT,
+    Q_STRUCTURE_PROMPT,
+    Q_DEPTH_PROMPT,
+    Q_RELEVANCE_PROMPT,
+)
 
 
 class TestTaskCompletionPromptAnchors:
@@ -77,3 +87,61 @@ class TestQualityPromptAnchors:
         assert "Respond as JSON" in QUALITY_PROMPT
         assert "overall_score:" in QUALITY_PROMPT
         assert "reasoning:" in QUALITY_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Perspective judge prompts
+# ---------------------------------------------------------------------------
+
+PERSPECTIVE_PROMPTS = [
+    ("TC_COMPLETENESS_PROMPT", TC_COMPLETENESS_PROMPT),
+    ("TC_EVIDENCE_PROMPT", TC_EVIDENCE_PROMPT),
+    ("TC_ACCURACY_PROMPT", TC_ACCURACY_PROMPT),
+    ("Q_STRUCTURE_PROMPT", Q_STRUCTURE_PROMPT),
+    ("Q_DEPTH_PROMPT", Q_DEPTH_PROMPT),
+    ("Q_RELEVANCE_PROMPT", Q_RELEVANCE_PROMPT),
+]
+
+
+class TestPerspectiveJudgePromptsPlaceholders:
+    """All 6 perspective prompts must have {task} and {output} placeholders."""
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_has_task_placeholder(self, name, prompt):
+        assert "{task}" in prompt, f"{name} missing {{task}} placeholder"
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_has_output_placeholder(self, name, prompt):
+        assert "{output}" in prompt, f"{name} missing {{output}} placeholder"
+
+
+class TestPerspectiveJudgePromptsAnchors:
+    """All 6 perspective prompts must have score anchors at 0.9, 0.5, 0.2."""
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_has_0_9_anchor(self, name, prompt):
+        assert "0.9" in prompt, f"{name} missing 0.9 anchor"
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_has_0_5_anchor(self, name, prompt):
+        assert "0.5" in prompt, f"{name} missing 0.5 anchor"
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_has_0_2_anchor(self, name, prompt):
+        assert "0.2" in prompt, f"{name} missing 0.2 anchor"
+
+
+class TestPerspectiveJudgePromptsJSON:
+    """All 6 perspective prompts must request a JSON response."""
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_requests_json_response(self, name, prompt):
+        assert "JSON" in prompt, f"{name} missing JSON response request"
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_json_has_score_key(self, name, prompt):
+        assert '"score"' in prompt, f"{name} missing score key in JSON"
+
+    @pytest.mark.parametrize("name,prompt", PERSPECTIVE_PROMPTS)
+    def test_json_has_reasoning_key(self, name, prompt):
+        assert '"reasoning"' in prompt, f"{name} missing reasoning key in JSON"
