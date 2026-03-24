@@ -134,6 +134,13 @@ def build_orchestrator_graph(
     """
     trace_fetcher = TraceFetcher(settings)
 
+    from src.tools.search import create_search_tool
+    try:
+        search_tool = create_search_tool(settings)
+    except Exception:
+        search_tool = None
+        logger.warning("Search tool unavailable for fact-checking -- spot-check disabled")
+
     def node_run_batch(state: OrchestratorState) -> dict[str, Any]:
         """Run the agent on all tasks in the batch."""
         tasks = state["tasks"]
@@ -198,7 +205,7 @@ def build_orchestrator_graph(
         analyses: list[AnalysisResult] = []
         for traj in trajectories:
             try:
-                analysis = analyze_trajectory(llm, traj)
+                analysis = analyze_trajectory(llm, traj, search_tool=search_tool)
             except Exception as exc:
                 logger.error("Grading failed for task '%s': %s", traj.task[:50], exc)
                 # Create a failed analysis so downstream nodes still have data
