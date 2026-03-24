@@ -73,10 +73,13 @@ def _check_single_claim(llm: BaseChatModel, search_tool: BaseTool, claim: str) -
     if not search_results:
         return None
 
+    # Ensure search_results is a string (may be list/dict from some tools)
+    search_text = str(search_results) if not isinstance(search_results, str) else search_results
+
     # Ask LLM to compare claim against search results
     try:
         prompt = FACT_CHECK_PROMPT.replace("{claim}", claim).replace(
-            "{search_results}", search_results[:3000]
+            "{search_results}", search_text[:3000]
         )
         response = llm.invoke([HumanMessage(content=prompt)])
         parsed = _parse_json_response(response.content)
