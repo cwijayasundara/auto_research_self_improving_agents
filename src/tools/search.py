@@ -28,7 +28,7 @@ RETRY_DELAY_SECONDS = 2
 def _is_quota_error(exc: Exception) -> bool:
     """Check if an exception indicates an unrecoverable quota/plan limit."""
     msg = str(exc).lower()
-    return any(kw in msg for kw in ("limit", "quota", "plan", "429", "rate"))
+    return any(kw in msg for kw in ("limit", "quota", "plan", "429", "432", "rate"))
 
 
 class ResilientSearch(BaseTool):
@@ -57,8 +57,17 @@ class ResilientSearch(BaseTool):
         for attempt in range(1 + MAX_RETRIES):
             try:
                 result = self.tavily_tool._run(query)
-                if result:
+                # Tavily may return {'error': ...} dict instead of raising
+                if isinstance(result, dict) and "error" in result:
+                    error_msg = str(result["error"])
+                    logger.warning("Tavily returned error dict: %s", error_msg)
+                    if _is_quota_error(Exception(error_msg)):
+                        return None  # Fall through to DDG
+                    continue
+                if result and isinstance(result, str):
                     return result
+                if result:
+                    return str(result)
                 return None
             except Exception as exc:
                 if _is_quota_error(exc):
