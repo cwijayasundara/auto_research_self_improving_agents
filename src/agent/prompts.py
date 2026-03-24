@@ -262,3 +262,24 @@ SYNTHESIS_SUBAGENT_PROMPT = (
     "- Cite sources for all claims\n"
     "- Do NOT perform web searches — work only with the information provided\n"
 )
+
+# --- Claim Verification Prompts ---
+
+CLAIM_EXTRACTION_PROMPT = (
+    "Extract the key factual claims from this research output. Only extract claims "
+    "that appear verbatim or are clearly stated in the text. Do not infer or "
+    "fabricate claims. Extract up to 10 claims.\n\n"
+    "## Agent Output\n{output}\n\n"
+    'Respond as JSON: {"claims": ["claim 1", "claim 2", ...]}'
+)
+
+CLAIM_VERIFICATION_PROMPT = (
+    "Verify each claim against the source output. For each claim, determine:\n"
+    "- Is it supported by a cited source in the output?\n"
+    "- Is it contradicted by other claims in the output?\n"
+    "- Is it suspiciously specific without any source?\n\n"
+    "## Claims\n{claims}\n\n"
+    "## Full Output\n{output}\n\n"
+    'Respond as JSON: {"verdicts": [{"claim": "...", '
+    '"verdict": "supported|unsupported|contradicted", "reasoning": "..."}]}'
+)
