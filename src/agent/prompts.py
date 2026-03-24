@@ -112,7 +112,7 @@ METAPROMPT_TEMPLATE = (
 )
 
 TASK_COMPLETION_PROMPT = (
-    "You are evaluating whether a research agent successfully completed its task.\n\n"
+    "You are judging whether a research agent successfully completed its task.\n\n"
     "## Task\n{task}\n\n"
     "## Agent Output\n{output}\n\n"
     "Evaluate the output on these criteria:\n"
@@ -120,6 +120,13 @@ TASK_COMPLETION_PROMPT = (
     "2. Is the output well-structured and readable?\n"
     "3. Are claims supported by cited sources?\n"
     "4. Is the analysis thorough and accurate?\n\n"
+    "## Scoring Guide\n"
+    "- **0.9**: Directly answers the question with 3+ cited sources, structured "
+    "sections, no factual errors, thorough coverage of all subtopics asked about.\n"
+    "- **0.5**: Partially addresses the question but misses key aspects, 1-2 sources, "
+    "some structure but gaps in analysis, may have minor inaccuracies.\n"
+    "- **0.2**: Off-topic or superficial, no sources, unstructured, factual errors "
+    "or hallucinated claims, fails to answer the core question.\n\n"
     "Respond as JSON with keys:\n"
     "- score: float between 0.0 and 1.0\n"
     "- passed: boolean (true if score >= 0.75)\n"
@@ -127,7 +134,7 @@ TASK_COMPLETION_PROMPT = (
 )
 
 QUALITY_PROMPT = (
-    "You are evaluating the quality of a research agent's output.\n\n"
+    "You are judging the quality of a research agent's output.\n\n"
     "## Task\n{task}\n\n"
     "## Agent Output\n{output}\n\n"
     "Rate the output quality on these dimensions:\n"
@@ -135,6 +142,13 @@ QUALITY_PROMPT = (
     "2. **Depth** (0-1): Is the analysis thorough?\n"
     "3. **Clarity** (0-1): Is the writing clear and well-organized?\n"
     "4. **Relevance** (0-1): Does the output stay focused on the task?\n\n"
+    "## Scoring Guide\n"
+    "- **0.9**: Clear logical structure with sections, accurate facts with citations, "
+    "deep analysis that covers nuances and trade-offs, stays tightly focused on the task.\n"
+    "- **0.5**: Readable but loosely organized, mostly accurate but some unsourced claims, "
+    "surface-level analysis, some tangential content.\n"
+    "- **0.2**: Disorganized or incoherent, factual errors, shallow or repetitive, "
+    "significant off-topic content or filler.\n\n"
     "Respond as JSON with keys:\n"
     "- accuracy: float\n- depth: float\n- clarity: float\n- relevance: float\n"
     "- overall_score: float (weighted average)\n"
