@@ -107,7 +107,7 @@ def _run_single_task(
             "total_tokens": total_tokens,
         }
     except Exception as exc:
-        logger.error("Agent failed on task '%s': %s", task[:50], exc)
+        logger.error("Agent failed on task '%s': %s", task[:50], exc, exc_info=True)
         latency = time.monotonic() - start
         return {
             "task": task,
