@@ -33,6 +33,7 @@ class AnalyzerState(TypedDict):
     task_completion: GraderResult
     efficiency: GraderResult
     quality: GraderResult
+    claim_verification: GraderResult
     classification: str
     average_score: float
 
