@@ -283,3 +283,21 @@ CLAIM_VERIFICATION_PROMPT = (
     'Respond as JSON: {"verdicts": [{"claim": "...", '
     '"verdict": "supported|unsupported|contradicted", "reasoning": "..."}]}'
 )
+
+# --- Factual Spot-Check Prompts ---
+
+CLAIM_SELECTION_PROMPT = (
+    "From these claims, select the 2-3 most objectively verifiable ones. "
+    "Prefer claims with specific numbers, dates, percentages, or named entities. "
+    "Avoid subjective or opinion-based claims.\n\n"
+    "## Claims\n{claims}\n\n"
+    'Respond as JSON: {"selected": ["claim 1", "claim 2"]}'
+)
+
+FACT_CHECK_PROMPT = (
+    "Does the search evidence support, contradict, or not address this claim?\n\n"
+    "## Claim\n{claim}\n\n"
+    "## Search Results\n{search_results}\n\n"
+    'Respond as JSON: {"verdict": "corroborated|contradicted|inconclusive", '
+    '"reasoning": "brief explanation"}'
+)
