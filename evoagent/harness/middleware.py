@@ -65,6 +65,31 @@ def check_output(
     return issues
 
 
+TASK_VERIFICATION_PROMPT = (
+    "Does this output fully address the task?\n\n"
+    "Task: {task}\n\n"
+    "Output (preview):\n{output}\n\n"
+    'Reply as JSON: {{"addressed": true, "missing": []}} or {{"addressed": false, "missing": ["list of missing aspects"]}}'
+)
+
+
+def verify_output_against_task(llm: Any, task: str, output: str) -> list[str] | None:
+    """Verify output addresses the task via lightweight LLM call.
+    Returns list of missing aspects, or None if addressed (or on error — fail-open).
+    """
+    try:
+        from evoagent.core.parsing import parse_llm_json
+        prompt = TASK_VERIFICATION_PROMPT.format(task=task[:500], output=output[:2000])
+        response = llm.invoke([HumanMessage(content=prompt)])
+        parsed = parse_llm_json(response.content)
+        if parsed.get("addressed", True):
+            return None
+        return parsed.get("missing", ["Output does not fully address the task"])
+    except Exception as exc:
+        logger.debug("Task verification failed (fail-open): %s", exc)
+        return None
+
+
 class SelfVerificationMiddleware(AgentMiddleware):
     """Checks agent output for completeness before finishing."""
 
@@ -76,12 +101,16 @@ class SelfVerificationMiddleware(AgentMiddleware):
         error_patterns: list[re.Pattern[str]] | None = None,
         min_length: int = 500,
         max_retries: int = 2,
+        verify_against_task: bool = False,
+        llm: Any = None,
     ) -> None:
         self._sections = required_sections or _DEFAULT_REQUIRED_SECTIONS
         self._patterns = error_patterns or _DEFAULT_ERROR_PATTERNS
         self._min_length = min_length
         self._max_retries = max_retries
         self._retry_count = 0
+        self._verify_task = verify_against_task
+        self._llm = llm
 
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
@@ -99,6 +128,18 @@ class SelfVerificationMiddleware(AgentMiddleware):
             return None
 
         issues = check_output(content, self._sections, self._patterns, self._min_length)
+
+        if not issues and self._verify_task and self._llm:
+            task_text = ""
+            for msg in messages:
+                if isinstance(msg, HumanMessage):
+                    task_text = getattr(msg, "content", "") or ""
+                    break
+            if task_text:
+                missing = verify_output_against_task(self._llm, task_text, content)
+                if missing:
+                    issues.extend(missing)
+
         if not issues:
             self._retry_count = 0
             return None
