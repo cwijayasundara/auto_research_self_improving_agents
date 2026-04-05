@@ -100,6 +100,20 @@ def cmd_run(settings: Settings, task: str) -> None:
         )
         prompt_store.append_feedback(current_version, feedback)
 
+    # --- Capture trace path and harness config version ---
+    trace_path = ""
+    trace_file = settings.traces_path / f"{traj.run_id}.json"
+    if trace_file.exists():
+        trace_path = str(trace_file)
+
+    from src.evolution.harness_config import HarnessConfigStore
+
+    harness_store = HarnessConfigStore(settings.harness_config_path)
+    harness_version = harness_store.get_latest_version()
+
+    if harness_version > 0:
+        harness_store.update_score(harness_version, analysis["average_score"])
+
     # --- Append to run log for background evolution daemon ---
     try:
         from dataclasses import asdict
@@ -116,6 +130,8 @@ def cmd_run(settings: Settings, task: str) -> None:
                 average_score=analysis["average_score"],
                 grader_results=[asdict(g) for g in graders],
                 prompt_version=current_version,
+                harness_config_version=harness_version,
+                trace_path=trace_path,
             )
         )
     except Exception as exc:

@@ -114,6 +114,47 @@ class TestHarnessConfigStore:
             assert store.get_latest_version() == 2
 
 
+class TestRunLogTraceCapture:
+    def test_run_log_entry_has_new_fields(self):
+        from src.evolution.run_log import RunLogEntry
+
+        entry = RunLogEntry(
+            run_id="test-001",
+            task="test",
+            output="report",
+            classification="partial",
+            average_score=0.78,
+            grader_results=[],
+            prompt_version=7,
+            harness_config_version=2,
+            trace_path="/tmp/traces/test.json",
+        )
+        d = entry.to_dict()
+        assert d["trace_path"] == "/tmp/traces/test.json"
+        assert d["harness_config_version"] == 2
+
+    def test_run_log_roundtrip_with_new_fields(self, tmp_path):
+        from src.evolution.run_log import RunLog, RunLogEntry
+
+        log = RunLog(tmp_path / "test.jsonl")
+        log.append(
+            RunLogEntry(
+                run_id="r1",
+                task="test",
+                output="out",
+                classification="partial",
+                average_score=0.72,
+                grader_results=[],
+                prompt_version=7,
+                harness_config_version=3,
+                trace_path="/tmp/trace.json",
+            )
+        )
+        entries = log.read_all()
+        assert entries[0].harness_config_version == 3
+        assert entries[0].trace_path == "/tmp/trace.json"
+
+
 class TestHarnessConfigWiring:
     def test_build_middleware_from_config(self):
         from evoagent.harness.builder import default_middleware_stack

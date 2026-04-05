@@ -33,6 +33,8 @@ class RunLogEntry:
         average_score: float,
         grader_results: list[dict[str, Any]],
         prompt_version: int,
+        harness_config_version: int = 0,
+        trace_path: str = "",
         timestamp: str | None = None,
         processed: bool = False,
     ) -> None:
@@ -43,6 +45,8 @@ class RunLogEntry:
         self.average_score = average_score
         self.grader_results = grader_results
         self.prompt_version = prompt_version
+        self.harness_config_version = harness_config_version
+        self.trace_path = trace_path
         self.timestamp = timestamp or datetime.now(UTC).isoformat()
         self.processed = processed
 
@@ -55,6 +59,8 @@ class RunLogEntry:
             "average_score": self.average_score,
             "grader_results": self.grader_results,
             "prompt_version": self.prompt_version,
+            "harness_config_version": self.harness_config_version,
+            "trace_path": self.trace_path,
             "timestamp": self.timestamp,
             "processed": self.processed,
         }
