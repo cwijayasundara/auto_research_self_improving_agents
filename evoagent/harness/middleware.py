@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -111,13 +113,83 @@ class SelfVerificationMiddleware(AgentMiddleware):
 
 # --- Context Assembly ---
 
+_TOOLS_TO_DETECT = ["python3", "python", "node", "npm", "curl", "git", "make", "gcc", "java", "go"]
+
+
+def detect_environment(
+    working_dir: str | Path,
+    max_entries: int = 50,
+    max_depth: int = 2,
+) -> dict[str, Any]:
+    """Detect the current environment and return a structured dict.
+
+    Returns:
+        working_directory: str path of the working directory
+        directory_listing: str with entries (dirs get '/' suffix, 2-level deep,
+            capped at max_entries, skips dotfiles)
+        available_tools: list[str] of tool names found via shutil.which()
+    """
+    working_dir = Path(working_dir)
+
+    # Build directory listing (BFS up to max_depth, skip dotfiles, cap at max_entries)
+    entries: list[str] = []
+
+    def _collect(directory: Path, depth: int) -> None:
+        if depth > max_depth or len(entries) >= max_entries:
+            return
+        try:
+            items = sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        except PermissionError:
+            return
+        for item in items:
+            if len(entries) >= max_entries:
+                break
+            if item.name.startswith("."):
+                continue
+            rel = item.relative_to(working_dir)
+            entries.append(str(rel) + ("/" if item.is_dir() else ""))
+            if item.is_dir() and depth < max_depth:
+                _collect(item, depth + 1)
+
+    _collect(working_dir, depth=1)
+
+    directory_listing = "\n".join(entries) if entries else "(empty)"
+
+    # Detect available tools
+    available_tools = [tool for tool in _TOOLS_TO_DETECT if shutil.which(tool) is not None]
+
+    return {
+        "working_directory": str(working_dir),
+        "directory_listing": directory_listing,
+        "available_tools": available_tools,
+    }
+
+
+def format_environment_context(env: dict[str, Any]) -> str:
+    """Format the environment dict as a markdown block."""
+    tools_str = ", ".join(env.get("available_tools", [])) or "none detected"
+    return (
+        "## System Environment\n"
+        f"**Working directory:** `{env.get('working_directory', '')}`\n\n"
+        f"**Available tools:** {tools_str}\n\n"
+        f"**Directory listing:**\n```\n{env.get('directory_listing', '')}\n```"
+    )
+
+
 class ContextAssemblyMiddleware(AgentMiddleware):
     """Enriches first model call with environment context."""
 
     tools: tuple[BaseTool, ...] = ()
 
-    def __init__(self, skills_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        skills_dir: Path | None = None,
+        detect_env: bool = False,
+        working_dir: Path | None = None,
+    ) -> None:
         self._skills_dir = skills_dir
+        self._detect_env = detect_env
+        self._working_dir = working_dir
         self._first_call = True
 
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -130,6 +202,15 @@ class ContextAssemblyMiddleware(AgentMiddleware):
             return None
 
         context_parts: list[str] = []
+
+        if self._detect_env:
+            try:
+                wd = self._working_dir or Path(os.getcwd())
+                env = detect_environment(wd)
+                context_parts.append(format_environment_context(env))
+            except Exception:
+                pass
+
         if self._skills_dir and Path(self._skills_dir).exists():
             try:
                 from evoagent.skills.manager import SkillManager
