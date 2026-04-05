@@ -16,7 +16,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +62,10 @@ def check_output(
     return issues
 
 
-class SelfVerificationMiddleware:
+class SelfVerificationMiddleware(AgentMiddleware):
     """Checks agent output for completeness before finishing."""
+
+    tools: tuple[BaseTool, ...] = ()
 
     def __init__(
         self,
@@ -107,8 +111,10 @@ class SelfVerificationMiddleware:
 
 # --- Context Assembly ---
 
-class ContextAssemblyMiddleware:
+class ContextAssemblyMiddleware(AgentMiddleware):
     """Enriches first model call with environment context."""
+
+    tools: tuple[BaseTool, ...] = ()
 
     def __init__(self, skills_dir: Path | None = None) -> None:
         self._skills_dir = skills_dir
@@ -159,8 +165,10 @@ def is_similar_query(q1: str, q2: str) -> bool:
     return len(words1 & words2) / min(len(words1), len(words2)) > 0.6
 
 
-class LoopDetectionMiddleware:
+class LoopDetectionMiddleware(AgentMiddleware):
     """Detects repetitive search queries and nudges toward synthesis."""
+
+    tools: tuple[BaseTool, ...] = ()
 
     def __init__(self, max_similar: int = 3, max_total: int = 12) -> None:
         self._max_similar = max_similar
@@ -176,9 +184,10 @@ class LoopDetectionMiddleware:
 
 # --- Trace Capture ---
 
-class TraceCaptureMiddleware:
+class TraceCaptureMiddleware(AgentMiddleware):
     """Records execution traces to disk for offline analysis."""
 
+    tools: tuple[BaseTool, ...] = ()
     MAX_TRACE_BYTES = 100_000
 
     def __init__(self, task: str = "", traces_dir: Path | str | None = None) -> None:
