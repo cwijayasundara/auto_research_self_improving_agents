@@ -21,7 +21,9 @@ from langchain_core.messages import HumanMessage
 from src.agent.prompt_store import PromptStore
 from src.agent.prompts import METAPROMPT_TEMPLATE
 from src.evolution.state import AnalysisResult
-from src.skills.manager import discover_skills
+from evoagent.skills.manager import SkillManager
+
+TRACES_DIR = Path("traces")
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +57,96 @@ def validate_prompt_autonomy(prompt: str) -> list[str]:
     return violations
 
 
-def analyze_failures(analyses: list[AnalysisResult]) -> dict[str, Any]:
-    """Aggregate failure patterns from failed/partial trajectories."""
+def _build_trace_digest(task: str, traces_dir: Path | None = None) -> str:
+    """Build a trace digest for a failed task by reading its trace file.
+
+    Matches traces to tasks by task text since the orchestrator generates
+    run_ids after the agent runs (and orchestrator is immutable).
+    """
+    search_dir = traces_dir or TRACES_DIR
+    if not search_dir.exists():
+        return ""
+
+    # Find the most recent trace matching this task
+    best_trace: dict[str, Any] | None = None
+    best_time = 0.0
+    for trace_file in search_dir.glob("*.json"):
+        try:
+            data = json.loads(trace_file.read_text())
+            if data.get("task", "")[:100] == task[:100]:
+                ts = trace_file.stat().st_mtime
+                if ts > best_time:
+                    best_time = ts
+                    best_trace = data
+        except Exception:
+            continue
+
+    if not best_trace:
+        return ""
+
+    # Extract key diagnostic info from the trace
+    parts: list[str] = []
+    parts.append(f"Duration: {best_trace.get('duration_seconds', '?')}s")
+    parts.append(f"Total steps: {best_trace.get('step_count', '?')}")
+
+    search_queries: list[str] = []
+    errors: list[str] = []
+    for step in best_trace.get("steps", []):
+        if step.get("type") == "tool_call":
+            args = step.get("args_preview", "")
+            if "query" in args:
+                search_queries.append(args[:100])
+            output = step.get("output_preview", "")
+            if any(kw in output.lower() for kw in ["error", "fail", "quota", "timeout"]):
+                errors.append(output[:150])
+        elif step.get("type") == "model_call":
+            tool_calls = step.get("tool_calls", [])
+            if tool_calls:
+                parts.append(f"Model called tools: {[tc['name'] for tc in tool_calls]}")
+
+    if search_queries:
+        parts.append(
+            f"Search queries tried ({len(search_queries)}): " + "; ".join(search_queries[:5])
+        )
+    if errors:
+        parts.append(f"Errors encountered ({len(errors)}): " + "; ".join(errors[:3]))
+
+    return "\n".join(parts)
+
+
+def analyze_failures(
+    analyses: list[AnalysisResult],
+    traces_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Aggregate failure patterns from failed/partial trajectories.
+
+    Enhanced with trace digest: reads execution traces from disk to provide
+    the prompt optimizer with deeper diagnostic context (Meta-Harness pattern).
+    """
     failed = [a for a in analyses if a["classification"] in ("failed", "partial")]
     if not failed:
-        return {"failure_analysis": "No failures to analyze.", "common_issues": []}
+        return {
+            "failure_analysis": "No failures to analyze.",
+            "common_issues": [],
+            "trace_digest": "",
+        }
 
     issues: list[str] = []
     for analysis in failed:
         for grader in analysis["grader_results"]:
-            if not grader["passed"]:
+            if not grader.passed:
                 issues.append(
-                    f"[{grader['name']}] {grader['reasoning']} (task: {analysis['task'][:80]})"
+                    f"[{grader.name}] {grader.reasoning} (task: {analysis['task'][:80]})"
                 )
 
     unique_issues = list(dict.fromkeys(issues))
+
+    # Build trace digests for failed trajectories (max 3)
+    trace_digests: list[str] = []
+    for analysis in failed[:3]:
+        digest = _build_trace_digest(analysis["task"], traces_dir)
+        if digest:
+            trace_digests.append(f"### Trace for: {analysis['task'][:80]}\n{digest}")
 
     failure_summary = (
         f"Analyzed {len(failed)} failed/partial trajectories. "
@@ -79,6 +156,7 @@ def analyze_failures(analyses: list[AnalysisResult]) -> dict[str, Any]:
     return {
         "failure_analysis": failure_summary,
         "common_issues": unique_issues[:10],
+        "trace_digest": "\n\n".join(trace_digests) if trace_digests else "",
     }
 
 
@@ -107,6 +185,7 @@ def generate_improved_prompt(
         failure_analysis=failure_info["failure_analysis"],
         common_issues="\n".join(f"- {i}" for i in failure_info["common_issues"]),
         available_skills=skills_summary or "No skills learned yet.",
+        trace_digest=failure_info.get("trace_digest", "No trace data available."),
     )
 
     for attempt in range(1 + MAX_AUTONOMY_RETRIES):
@@ -276,7 +355,7 @@ def optimize_prompt(
     # Build skills summary for skill-aware prompt optimization
     skills_summary = ""
     if skills_dir and Path(skills_dir).exists():
-        skills = discover_skills(Path(skills_dir))
+        skills = SkillManager(Path(skills_dir)).discover()
         if skills:
             skill_lines = [f"- {s['name']}: {s['description']}" for s in skills.values()]
             skills_summary = "\n".join(skill_lines)

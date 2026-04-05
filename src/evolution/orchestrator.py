@@ -32,19 +32,19 @@ from src.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from src.config.settings import Settings
 from src.evolution.analyzer import analyze_trajectory
 from src.evolution.evolution_state_bridge import persist_evolution_state
-from src.evolution.failure_skill_creator import create_failure_skills_from_batch
 from src.evolution.prompt_optimizer import optimize_prompt
-from src.evolution.skill_extractor import extract_skills_from_batch
 from src.evolution.state import (
     AnalysisResult,
     EvolutionMetrics,
     OrchestratorState,
 )
-from src.memory.compression import consolidate_episodic, deduplicate_semantic
+from evoagent.memory.compression import deduplicate_semantic
+from evoagent.memory.store import FileMemoryStore
+from evoagent.skills.extractor import extract_skills_from_batch
+from evoagent.skills.manager import SkillManager
+from evoagent.tracing.trajectory import TrajectoryRecord
 from src.memory.reflection import reflect_and_store
-from src.memory.store import MemoryStore
 from src.tracing.fetcher import TraceFetcher
-from src.tracing.trajectory import Trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ TASK_TIMEOUT_SECONDS = 300  # 5 minutes
 def _run_single_task(
     settings: Settings,
     prompt_store: PromptStore,
-    memory_store: MemoryStore,
+    memory_store: FileMemoryStore,
     task: str,
 ) -> dict[str, Any]:
     """Run the agent on a single task and return the result.
@@ -121,7 +121,7 @@ def build_orchestrator_graph(
     settings: Settings,
     llm: BaseChatModel,
     prompt_store: PromptStore,
-    memory_store: MemoryStore,
+    memory_store: FileMemoryStore,
 ) -> StateGraph:
     """Build the two-speed evolution orchestrator as a LangGraph StateGraph.
 
@@ -170,20 +170,15 @@ def build_orchestrator_graph(
         trajectories = []
         for r in results:
             run_id = str(uuid.uuid4())
-            from src.tracing.trajectory import TrajectoryMetrics
-
-            metrics = TrajectoryMetrics(
-                total_tokens=r.get("total_tokens", 0),
-                total_steps=r.get("total_steps", 0),
-                latency_seconds=r.get("latency", 0.0),
-                tool_call_count=0,
-            )
-            traj = Trajectory(
+            traj = TrajectoryRecord(
                 run_id=run_id,
                 task=r["task"],
                 output=r["output"],
                 status=r["status"],
-                metrics=metrics,
+                total_tokens=r.get("total_tokens", 0),
+                total_steps=r.get("total_steps", 0),
+                latency_seconds=r.get("latency", 0.0),
+                tool_call_count=0,
             )
             trajectories.append(traj)
 
@@ -232,7 +227,7 @@ def build_orchestrator_graph(
             graders = analysis["grader_results"]
             if graders:
                 grader_summary = "  ".join(
-                    f"{g['name']}={g['score']:.2f}({'PASS' if g['passed'] else 'FAIL'})"
+                    f"{g.name}={g.score:.2f}({'PASS' if g.passed else 'FAIL'})"
                     for g in graders
                 )
             else:
@@ -285,20 +280,15 @@ def build_orchestrator_graph(
         return {}
 
     def node_compress_memories(state: OrchestratorState) -> dict[str, Any]:
-        """Compress memories: deduplicate semantic and consolidate old episodic."""
+        """Compress memories: deduplicate semantic."""
         logger.info("--- Compress Memories ---")
         deduped = deduplicate_semantic(
             memory_store,
             threshold=settings.compression_similarity_threshold,
         )
-        consolidated = consolidate_episodic(
-            memory_store,
-            current_cycle=state["current_cycle"],
-        )
         logger.info(
-            "Compressed memories: %d semantic deduplicated, %d episodic consolidated",
+            "Compressed memories: %d semantic deduplicated",
             deduped,
-            consolidated,
         )
         return {}
 
@@ -310,7 +300,7 @@ def build_orchestrator_graph(
             logger.info("No analyses available for skill extraction")
             return {}
         try:
-            created = extract_skills_from_batch(llm, analyses, settings.skills_path)
+            created = extract_skills_from_batch(llm, analyses, SkillManager(settings.skills_path), mode="success")
             if created:
                 for p in created:
                     logger.info("  NEW SKILL: %s", p.stem)
@@ -332,7 +322,7 @@ def build_orchestrator_graph(
             logger.info("No analyses available for failure skill creation")
             return {}
         try:
-            created = create_failure_skills_from_batch(llm, analyses, settings.skills_path)
+            created = extract_skills_from_batch(llm, analyses, SkillManager(settings.skills_path), mode="failure")
             if created:
                 for p in created:
                     logger.info("  NEW DEFENSIVE SKILL: %s", p.stem)
@@ -390,9 +380,7 @@ def build_orchestrator_graph(
         scores = [a["average_score"] for a in analyses]
         avg_score = sum(scores) / len(scores) if scores else 0.0
 
-        from src.skills.manager import discover_skills
-
-        all_skills = discover_skills(settings.skills_path)
+        all_skills = SkillManager(settings.skills_path).discover()
         success_skills = sum(1 for sid in all_skills if not sid.startswith(("avoid-", "handle-")))
         failure_skills = sum(1 for sid in all_skills if sid.startswith(("avoid-", "handle-")))
 
@@ -516,7 +504,7 @@ def run_evolution(
     max_cycles = max_cycles or settings.max_evolution_cycles
     llm = create_llm(settings)
     prompt_store = PromptStore(settings.prompts_path)
-    memory_store = MemoryStore(settings.memory_path)
+    memory_store = FileMemoryStore(settings.memory_path)
 
     if prompt_store.get_latest_version_number() == 0:
         prompt_store.add_version(DEFAULT_SYSTEM_PROMPT, score=None)

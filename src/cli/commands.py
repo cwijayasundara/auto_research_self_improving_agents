@@ -15,8 +15,8 @@ from src.agent.deep_agent import create_agent, extract_output
 from src.agent.prompt_store import PromptStore
 from src.config.settings import Settings, configure_logging, export_langsmith_env, load_settings
 from src.evolution.orchestrator import run_evolution
-from src.memory.store import MemoryStore
-from src.skills.manager import list_skills
+from evoagent.memory.store import FileMemoryStore
+from evoagent.skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def cmd_run(settings: Settings, task: str) -> None:
     """Run the agent on a single task."""
     prompt_store = PromptStore(settings.prompts_path)
-    memory_store = MemoryStore(settings.memory_path)
+    memory_store = FileMemoryStore(settings.memory_path)
 
     if prompt_store.get_latest_version_number() == 0:
         from src.agent.prompts import DEFAULT_SYSTEM_PROMPT
@@ -112,12 +112,17 @@ def cmd_prompts(settings: Settings) -> None:
 
 def cmd_skills(settings: Settings) -> None:
     """List all learned skills (success-derived and failure-derived)."""
-    print(list_skills(settings.skills_path))
+    skills = SkillManager(settings.skills_path).discover()
+    if not skills:
+        print("No skills learned yet.")
+        return
+    for skill_id, skill in sorted(skills.items()):
+        print(f"  {skill_id}: {skill['name']} - {skill['description']}")
 
 
 def cmd_memory(settings: Settings) -> None:
     """Browse stored memories."""
-    memory_store = MemoryStore(settings.memory_path)
+    memory_store = FileMemoryStore(settings.memory_path)
 
     episodic_count = memory_store.count("episodic")
     semantic_count = memory_store.count("semantic")
@@ -140,6 +145,41 @@ def cmd_memory(settings: Settings) -> None:
             content = mem.get("content", str(mem))[:80]
             mem_type = mem.get("type", "unknown")
             print(f"  [{mem_type}] {content}")
+
+
+def cmd_sleep_review(settings: Settings) -> None:
+    """Run offline cross-run trace analysis (sleep-time compute)."""
+    from src.agent.deep_agent import create_llm
+    from evoagent.evolution.sleep_review import run_sleep_review
+
+    memory_store = FileMemoryStore(settings.memory_path)
+    llm = create_llm(settings)
+
+    print("Running sleep-time review (cross-run trace analysis)...")
+    result = run_sleep_review(llm, memory=memory_store, traces_dir=settings.traces_path)
+
+    if result["status"] == "no_traces":
+        print("No traces found. Run the agent first to generate traces.")
+        return
+
+    print("\n" + "=" * 60)
+    print("SLEEP REVIEW RESULTS")
+    print("=" * 60)
+
+    if result.get("meta_instructions"):
+        print("\nMeta-Instructions (stored as semantic memories):")
+        for i, instr in enumerate(result["meta_instructions"], 1):
+            print(f"  {i}. {instr}")
+
+    if result.get("recurring_failures"):
+        print("\nRecurring Failures:")
+        for f in result["recurring_failures"]:
+            print(f"  - {f}")
+
+    if result.get("consistent_successes"):
+        print("\nConsistent Successes:")
+        for s in result["consistent_successes"]:
+            print(f"  - {s}")
 
 
 def cmd_state(settings: Settings) -> None:
@@ -195,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
     # state
     subparsers.add_parser("state", help="Show evolution state for outer loop")
 
+    # sleep-review
+    subparsers.add_parser(
+        "sleep-review",
+        help="Run offline cross-run trace analysis (sleep-time compute)",
+    )
+
     return parser
 
 
@@ -225,3 +271,5 @@ def main() -> None:
         cmd_memory(settings)
     elif args.command == "state":
         cmd_state(settings)
+    elif args.command == "sleep-review":
+        cmd_sleep_review(settings)

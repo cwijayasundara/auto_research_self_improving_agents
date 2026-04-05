@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from src.evolution.state import AnalysisResult, EvolutionMetrics
-from src.skills.manager import discover_skills
+from evoagent.skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +69,15 @@ def persist_failure_analysis(
     seen: set[str] = set()
     for analysis in failed:
         for grader in analysis["grader_results"]:
-            if not grader["passed"]:
-                key = f"{grader['name']}:{grader['reasoning'][:50]}"
+            if not grader.passed:
+                key = f"{grader.name}:{grader.reasoning[:50]}"
                 if key not in seen:
                     seen.add(key)
                     issues.append(
                         {
-                            "grader": grader["name"],
-                            "score": f"{grader['score']:.3f}",
-                            "reasoning": grader["reasoning"],
+                            "grader": grader.name,
+                            "score": f"{grader.score:.3f}",
+                            "reasoning": grader.reasoning,
                             "task": analysis["task"][:100],
                         }
                     )
@@ -101,8 +101,8 @@ def persist_failure_analysis(
     grader_failures: dict[str, int] = {}
     for analysis in failed:
         for grader in analysis["grader_results"]:
-            if not grader["passed"]:
-                grader_failures[grader["name"]] = grader_failures.get(grader["name"], 0) + 1
+            if not grader.passed:
+                grader_failures[grader.name] = grader_failures.get(grader.name, 0) + 1
 
     for grader_name, count in sorted(grader_failures.items(), key=lambda x: -x[1]):
         if grader_name == "task_completion":
@@ -182,7 +182,7 @@ def persist_skills_summary(
     skills_dir: Path,
 ) -> None:
     """Write a summary of all learned skills to evolution_state/skills_summary.md."""
-    skills = discover_skills(skills_dir)
+    skills = SkillManager(skills_dir).discover()
 
     lines = [
         "# Learned Skills Summary",

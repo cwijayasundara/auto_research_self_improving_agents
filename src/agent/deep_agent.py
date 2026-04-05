@@ -13,11 +13,17 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
+from evoagent.harness.middleware import (
+    ContextAssemblyMiddleware,
+    LoopDetectionMiddleware,
+    SelfVerificationMiddleware,
+    TraceCaptureMiddleware,
+)
 from src.agent.prompt_store import PromptStore
 from src.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from src.config.settings import Settings
-from src.memory.compression import compress_memory_context
-from src.memory.store import MemoryStore
+from evoagent.memory.compression import compress_context
+from evoagent.memory.store import FileMemoryStore
 from src.tools.search import create_search_tool
 
 logger = logging.getLogger(__name__)
@@ -101,18 +107,18 @@ def create_llm(settings: Settings) -> BaseChatModel:
 
 
 def build_memory_context(
-    memory_store: MemoryStore,
+    memory_store: FileMemoryStore,
     task: str,
     token_budget: int = 2000,
 ) -> str:
     """Retrieve relevant memories and format them for prompt injection."""
-    return compress_memory_context(memory_store, task, token_budget=token_budget)
+    return compress_context(memory_store, task, token_budget=token_budget)
 
 
 def create_agent(
     settings: Settings,
     prompt_store: PromptStore,
-    memory_store: MemoryStore,
+    memory_store: FileMemoryStore,
     task: str = "",
     extra_tools: list[BaseTool] | None = None,
 ) -> CompiledStateGraph[Any, Any]:
@@ -154,12 +160,21 @@ def create_agent(
         f", subagents={len(subagents)}" if subagents else "",
     )
 
+    # Build harness middleware stack (zero extra LLM calls)
+    harness_middleware = [
+        SelfVerificationMiddleware(),
+        ContextAssemblyMiddleware(skills_dir=settings.skills_path),
+        LoopDetectionMiddleware(),
+        TraceCaptureMiddleware(task=task, traces_dir=settings.traces_path),
+    ]
+
     kwargs: dict[str, Any] = {
         "model": llm,
         "tools": tools,
         "system_prompt": prompt,
         "name": AGENT_NAME,
         "skills": skills_sources or None,
+        "middleware": harness_middleware,
     }
     if subagents:
         kwargs["subagents"] = subagents
