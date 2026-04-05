@@ -12,15 +12,24 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
-from src.evolution.graders.claim_verification import _extract_claims, grade_claims
-from src.evolution.graders.efficiency import grade_efficiency
-from src.evolution.graders.fact_checker import spot_check_claims
-from src.evolution.graders.multi_judge import (
-    multi_judge_quality,
-    multi_judge_task_completion,
+from evoagent.core.types import GraderResult, TrajectoryMetrics
+from evoagent.graders.efficiency import EfficiencyGrader
+from evoagent.graders.multi_judge import MultiJudgeGrader
+from evoagent.tracing.trajectory import TrajectoryRecord
+
+from src.agent.prompts import (
+    Q_DEPTH_PROMPT,
+    Q_RELEVANCE_PROMPT,
+    Q_STRUCTURE_PROMPT,
+    QUALITY_PROMPT,
+    TC_ACCURACY_PROMPT,
+    TC_COMPLETENESS_PROMPT,
+    TC_EVIDENCE_PROMPT,
+    TASK_COMPLETION_PROMPT,
 )
-from src.evolution.state import AnalysisResult, AnalyzerState, GraderResult
-from src.tracing.trajectory import Trajectory
+from src.evolution.graders.claim_verification import _extract_claims, grade_claims
+from src.evolution.graders.fact_checker import spot_check_claims
+from src.evolution.state import AnalysisResult, AnalyzerState
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +44,9 @@ def classify_trajectory(grader_results: list[GraderResult]) -> tuple[str, float]
     if not grader_results:
         return "failed", 0.0
 
-    scores = [g["score"] for g in grader_results]
+    scores = [g.score for g in grader_results]
     avg_score = sum(scores) / len(scores)
-    pass_count = sum(1 for g in grader_results if g["passed"])
+    pass_count = sum(1 for g in grader_results if g.passed)
 
     if pass_count >= MIN_PASS_COUNT and avg_score >= MIN_AVERAGE_SCORE:
         if avg_score >= SUCCESSFUL_THRESHOLD:
@@ -50,25 +59,51 @@ def classify_trajectory(grader_results: list[GraderResult]) -> tuple[str, float]
     return "failed", round(avg_score, 3)
 
 
+def _trajectory_to_metrics(trajectory: TrajectoryRecord) -> TrajectoryMetrics:
+    """Convert TrajectoryRecord flat fields to TrajectoryMetrics."""
+    return TrajectoryMetrics(
+        total_tokens=trajectory.total_tokens,
+        total_steps=trajectory.total_steps,
+        latency_seconds=trajectory.latency_seconds,
+        tool_call_count=trajectory.tool_call_count,
+    )
+
+
 def build_analyzer_graph(llm: BaseChatModel, search_tool: BaseTool | None = None) -> StateGraph:
     """Build the trajectory analyzer as a LangGraph StateGraph.
 
     The four graders run in parallel from START, then converge on classify.
     """
+    task_completion_grader = MultiJudgeGrader(
+        llm=llm,
+        name="task_completion",
+        judge_prompts=[TC_COMPLETENESS_PROMPT, TC_EVIDENCE_PROMPT, TC_ACCURACY_PROMPT],
+        fallback_prompt=TASK_COMPLETION_PROMPT,
+    )
+
+    quality_grader = MultiJudgeGrader(
+        llm=llm,
+        name="quality",
+        judge_prompts=[Q_STRUCTURE_PROMPT, Q_DEPTH_PROMPT, Q_RELEVANCE_PROMPT],
+        fallback_prompt=QUALITY_PROMPT,
+    )
+
+    efficiency_grader = EfficiencyGrader()
 
     def node_grade_task_completion(state: AnalyzerState) -> dict[str, Any]:
         traj = state["trajectory"]
-        result = multi_judge_task_completion(llm, traj.task, traj.output)
+        result = task_completion_grader.grade(traj.task, traj.output)
         return {"task_completion": result}
 
     def node_grade_efficiency(state: AnalyzerState) -> dict[str, Any]:
         traj = state["trajectory"]
-        result = grade_efficiency(traj.metrics)
+        metrics = _trajectory_to_metrics(traj)
+        result = efficiency_grader.grade(traj.task, traj.output, metrics=metrics)
         return {"efficiency": result}
 
     def node_grade_quality(state: AnalyzerState) -> dict[str, Any]:
         traj = state["trajectory"]
-        result = multi_judge_quality(llm, traj.task, traj.output)
+        result = quality_grader.grade(traj.task, traj.output)
         return {"quality": result}
 
     def node_grade_claims(state: AnalyzerState) -> dict[str, Any]:
@@ -116,7 +151,7 @@ def build_analyzer_graph(llm: BaseChatModel, search_tool: BaseTool | None = None
 
 def analyze_trajectory(
     llm: BaseChatModel,
-    trajectory: Trajectory,
+    trajectory: TrajectoryRecord,
     search_tool: BaseTool | None = None,
 ) -> AnalysisResult:
     """Analyze a single trajectory through the grading pipeline."""
