@@ -480,3 +480,44 @@ class TimeBudgetMiddleware(AgentMiddleware):
         # standard ToolMessage interface.
         result.__dict__.setdefault("_time_budget_warning", warning_msg)
         return result
+
+
+# --- Reasoning Sandwich ---
+
+class ReasoningSandwichMiddleware(AgentMiddleware):
+    """Allocates reasoning effort across agent phases."""
+
+    tools: tuple[BaseTool, ...] = ()
+
+    def __init__(
+        self,
+        planning_effort: str = "high",
+        implementation_effort: str = "medium",
+        verification_effort: str = "high",
+        planning_calls: int = 2,
+    ) -> None:
+        self._planning_effort = planning_effort
+        self._impl_effort = implementation_effort
+        self._verif_effort = verification_effort
+        self._planning_calls = planning_calls
+        self._call_count = 0
+        self._in_verification = False
+
+    def increment_call(self) -> None:
+        self._call_count += 1
+
+    def enter_verification(self) -> None:
+        self._in_verification = True
+
+    def get_reasoning_effort(self) -> str:
+        if self._in_verification:
+            return self._verif_effort
+        if self._call_count < self._planning_calls:
+            return self._planning_effort
+        return self._impl_effort
+
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        effort = self.get_reasoning_effort()
+        self._call_count += 1
+        logger.debug("ReasoningSandwich: call %d, effort=%s", self._call_count, effort)
+        return None
