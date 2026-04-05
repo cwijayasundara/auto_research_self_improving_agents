@@ -252,16 +252,104 @@ class LoopDetectionMiddleware(AgentMiddleware):
 
     tools: tuple[BaseTool, ...] = ()
 
-    def __init__(self, max_similar: int = 3, max_total: int = 12) -> None:
+    _FILE_EDIT_TOOLS = {"write_file", "edit_file", "create_file", "patch"}
+
+    def __init__(
+        self,
+        max_similar: int = 3,
+        max_total: int = 12,
+        max_file_edits: int = 5,
+        max_repeated_tools: int = 4,
+    ) -> None:
         self._max_similar = max_similar
         self._max_total = max_total
+        self._max_file_edits = max_file_edits
+        self._max_repeated_tools = max_repeated_tools
         self._queries: list[str] = []
         self._warned = False
+        self._file_edit_counts: dict[str, int] = {}
+        self._file_edit_warned: set[str] = set()
+        self._tool_calls: list[tuple[str, str]] = []
+        self._tool_warned: bool = False
 
     def should_warn(self, query: str) -> bool:
         similar_count = sum(1 for q in self._queries if is_similar_query(q, query))
         self._queries.append(query)
         return (similar_count >= self._max_similar or len(self._queries) >= self._max_total) and not self._warned
+
+    def should_warn_file_edit(self, file_path: str) -> bool:
+        """Increment edit count for file_path, return True if threshold reached and not yet warned."""
+        self._file_edit_counts[file_path] = self._file_edit_counts.get(file_path, 0) + 1
+        if self._file_edit_counts[file_path] >= self._max_file_edits and file_path not in self._file_edit_warned:
+            self._file_edit_warned.add(file_path)
+            return True
+        return False
+
+    def should_warn_repeated_tool(self, tool_name: str, args_str: str) -> bool:
+        """Track tool calls, return True if >= max_repeated_tools similar calls exist and not yet warned."""
+        self._tool_calls.append((tool_name, args_str))
+        if self._tool_warned:
+            return False
+        similar_count = sum(
+            1
+            for name, args in self._tool_calls
+            if name == tool_name and is_similar_query(args, args_str)
+        )
+        if similar_count >= self._max_repeated_tools:
+            self._tool_warned = True
+            return True
+        return False
+
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+        """Call handler then append loop-detection warnings if thresholds are crossed."""
+        result = handler(request)
+
+        tool_name: str = getattr(request, "name", "") or getattr(request, "tool_name", "") or ""
+        tool_args: dict[str, Any] = {}
+        raw_args = getattr(request, "args", None) or getattr(request, "arguments", None) or {}
+        if isinstance(raw_args, dict):
+            tool_args = raw_args
+
+        # Determine file path from common arg key names
+        file_path: str | None = None
+        for key in ("file_path", "path", "filename"):
+            val = tool_args.get(key)
+            if isinstance(val, str) and val:
+                file_path = val
+                break
+
+        warnings: list[str] = []
+
+        # File-edit tracking
+        if tool_name in self._FILE_EDIT_TOOLS and file_path:
+            if self.should_warn_file_edit(file_path):
+                warnings.append(
+                    f"LOOP WARNING: '{file_path}' has been edited {self._max_file_edits}+ times. "
+                    "Consider whether further edits are necessary."
+                )
+
+        # Repeated tool tracking
+        args_str = str(tool_args)
+        if self.should_warn_repeated_tool(tool_name, args_str):
+            warnings.append(
+                f"LOOP WARNING: tool '{tool_name}' has been called {self._max_repeated_tools}+ times "
+                "with similar arguments. Consider synthesizing results instead of repeating."
+            )
+
+        if not warnings:
+            return result
+
+        content = getattr(result, "content", None)
+        if not isinstance(content, str):
+            return result
+
+        from langchain_core.messages import ToolMessage  # noqa: PLC0415
+
+        tool_call_id = getattr(result, "tool_call_id", "") or ""
+        warning_text = "\n".join(warnings)
+        warning_msg = ToolMessage(content=warning_text, tool_call_id=tool_call_id)
+        result.__dict__.setdefault("_loop_detection_warnings", []).append(warning_msg)
+        return result
 
 
 # --- Trace Capture ---
