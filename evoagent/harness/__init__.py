@@ -12,14 +12,18 @@ from evoagent.harness.builder import default_middleware_stack
 from evoagent.harness.middleware import (
     ContextAssemblyMiddleware,
     LoopDetectionMiddleware,
+    ReasoningSandwichMiddleware,
     SelfVerificationMiddleware,
+    TimeBudgetMiddleware,
     TraceCaptureMiddleware,
 )
 
 __all__ = [
     "ContextAssemblyMiddleware",
     "LoopDetectionMiddleware",
+    "ReasoningSandwichMiddleware",
     "SelfVerificationMiddleware",
+    "TimeBudgetMiddleware",
     "TraceCaptureMiddleware",
     "default_middleware_stack",
 ]
