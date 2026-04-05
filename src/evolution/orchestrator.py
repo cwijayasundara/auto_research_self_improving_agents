@@ -258,10 +258,11 @@ def build_orchestrator_graph(
             return {}
         for analysis in state["analysis_results"]:
             try:
+                from dataclasses import asdict
                 grader_dict = {
                     "average_score": analysis["average_score"],
                     "classification": analysis["classification"],
-                    "graders": analysis["grader_results"],
+                    "graders": [asdict(g) for g in analysis["grader_results"]],
                 }
                 reflect_and_store(
                     llm=llm,
