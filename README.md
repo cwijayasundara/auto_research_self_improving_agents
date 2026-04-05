@@ -341,10 +341,10 @@ The generic self-improving patterns have been extracted into the **`evoagent`** 
 ### Install tiers
 
 ```bash
-pip install evoagent                  # Core: memory, skills, config, types (pydantic only)
-pip install evoagent[harness]         # + middleware (adds langchain)
-pip install evoagent[evolution]       # + full Karpathy loop (adds langgraph, langsmith)
-pip install evoagent[all]             # Everything
+pip install -e ./evoagent                  # Core: memory, skills, config, types (pydantic only)
+pip install -e "./evoagent[harness]"       # + middleware (adds langchain)
+pip install -e "./evoagent[evolution]"     # + full Karpathy loop (adds langgraph, langsmith)
+pip install -e "./evoagent[all]"           # Everything
 ```
 
 ### Quick start: cherry-pick components

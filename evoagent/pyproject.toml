@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "evoagent"
 version = "0.1.0"
@@ -7,6 +11,10 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
 ]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["evoagent", "evoagent.*"]
 
 [project.optional-dependencies]
 harness = [

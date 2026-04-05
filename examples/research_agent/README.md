@@ -6,7 +6,7 @@ that improves itself through the Karpathy-style evolution loop.
 ## Install
 
 ```bash
-pip install evoagent[all]
+pip install -e "./evoagent[all]"
 pip install deepagents langchain-openai langchain-tavily ddgs
 ```
 
