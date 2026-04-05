@@ -24,6 +24,7 @@ prompts/
 traces/
 evolution_state/
 skills/
+!evoagent/skills/
 
 # Keep task files and results
 !tasks/
