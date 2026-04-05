@@ -50,6 +50,8 @@ class OrchestratorState(TypedDict):
     """State for the top-level evolution orchestrator."""
 
     tasks: list[str]
+    holdout_tasks: list[str]
+    batch_size: int
     current_cycle: int
     max_cycles: int
     trajectories: list[TrajectoryRecord]

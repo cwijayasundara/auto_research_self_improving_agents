@@ -16,6 +16,7 @@ then signals the outer loop via evolution_state/plateau_report.md.
 """
 
 import logging
+import random
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -140,28 +141,44 @@ def build_orchestrator_graph(
         search_tool = None
         logger.warning("Search tool unavailable for fact-checking -- spot-check disabled")
 
+    def _sample_tasks(all_tasks: list[str], batch_size: int, cycle: int) -> list[str]:
+        """Sample batch_size tasks from the pool, rotating across cycles.
+
+        Uses cycle number as seed offset so each cycle gets a different sample,
+        but runs are reproducible.  When batch_size >= len(all_tasks), returns all.
+        """
+        if batch_size >= len(all_tasks):
+            return list(all_tasks)
+        rng = random.Random(cycle * 31)
+        return rng.sample(all_tasks, batch_size)
+
     def node_run_batch(state: OrchestratorState) -> dict[str, Any]:
-        """Run the agent on all tasks in the batch."""
-        tasks = state["tasks"]
+        """Run the agent on a sampled batch of tasks."""
+        all_tasks = state["tasks"]
+        batch_size = state.get("batch_size") or len(all_tasks)
         cycle = state["current_cycle"]
+
+        batch = _sample_tasks(all_tasks, batch_size, cycle)
+
         logger.info("")
         logger.info("=" * 60)
         logger.info(
-            "  CYCLE %d  |  Running %d tasks  |  prompt v%d",
+            "  CYCLE %d  |  Running %d/%d tasks  |  prompt v%d",
             cycle,
-            len(tasks),
+            len(batch),
+            len(all_tasks),
             state.get("prompt_version", 0),
         )
         logger.info("=" * 60)
 
         results = []
-        for i, task in enumerate(tasks, 1):
-            logger.info("[%d/%d] Running: %s", i, len(tasks), task[:80])
+        for i, task in enumerate(batch, 1):
+            logger.info("[%d/%d] Running: %s", i, len(batch), task[:80])
             result = _run_single_task(settings, prompt_store, memory_store, task)
             logger.info(
                 "[%d/%d] Status: %s  (output: %d chars)",
                 i,
-                len(tasks),
+                len(batch),
                 result["status"],
                 len(result["output"]),
             )
@@ -361,6 +378,55 @@ def build_orchestrator_graph(
             logger.info("Prompt unchanged (v%d)", old_version)
         return {"prompt_version": new_version}
 
+    def node_holdout_check(state: OrchestratorState) -> dict[str, Any]:
+        """Run the current prompt on holdout tasks to measure generalization.
+
+        Runs only when holdout tasks are available. Scores are logged but do NOT
+        feed back into the optimizer — they are an independent signal.
+        """
+        holdout = state.get("holdout_tasks") or []
+        if not holdout:
+            return {}
+
+        logger.info("--- Holdout Check (%d tasks) ---", len(holdout))
+        holdout_analyses: list[AnalysisResult] = []
+        for i, task in enumerate(holdout, 1):
+            logger.info("  [holdout %d/%d] %s", i, len(holdout), task[:60])
+            result = _run_single_task(settings, prompt_store, memory_store, task)
+            if result["status"] == "error":
+                logger.warning("  [holdout %d/%d] error — skipping", i, len(holdout))
+                continue
+            run_id = str(uuid.uuid4())
+            traj = TrajectoryRecord(
+                run_id=run_id,
+                task=result["task"],
+                output=result["output"],
+                status=result["status"],
+                total_tokens=result.get("total_tokens", 0),
+                total_steps=result.get("total_steps", 0),
+                latency_seconds=result.get("latency", 0.0),
+                tool_call_count=0,
+            )
+            try:
+                analysis = analyze_trajectory(llm, traj, search_tool=search_tool)
+                holdout_analyses.append(analysis)
+            except Exception as exc:
+                logger.error("  Holdout grading failed: %s", exc)
+
+        if holdout_analyses:
+            scores = [a["average_score"] for a in holdout_analyses]
+            avg = sum(scores) / len(scores)
+            logger.info(
+                "  Holdout score: %.3f (n=%d)  |  %s",
+                avg,
+                len(holdout_analyses),
+                "  ".join(
+                    f"{a['task'][:30]}={a['average_score']:.2f}"
+                    for a in holdout_analyses
+                ),
+            )
+        return {}
+
     def node_persist_state(state: OrchestratorState) -> dict[str, Any]:
         """Persist evolution state for the outer-loop coding agent."""
         logger.info("--- Persist Evolution State ---")
@@ -468,6 +534,7 @@ def build_orchestrator_graph(
     graph.add_node("extract_skills", node_extract_skills)
     graph.add_node("create_failure_skills", node_create_failure_skills)
     graph.add_node("optimize_prompt", node_optimize_prompt)
+    graph.add_node("holdout_check", node_holdout_check)
     graph.add_node("persist_state", node_persist_state)
     graph.add_node("aggregate_metrics", node_aggregate_metrics)
 
@@ -478,9 +545,10 @@ def build_orchestrator_graph(
     graph.add_edge("analyze", "reflect")
     graph.add_edge("reflect", "compress_memories")
     graph.add_edge("compress_memories", "extract_skills")
-    graph.add_edge("extract_skills", "create_failure_skills")  # NEW
+    graph.add_edge("extract_skills", "create_failure_skills")
     graph.add_edge("create_failure_skills", "optimize_prompt")
-    graph.add_edge("optimize_prompt", "persist_state")  # NEW
+    graph.add_edge("optimize_prompt", "holdout_check")
+    graph.add_edge("holdout_check", "persist_state")
     graph.add_edge("persist_state", "aggregate_metrics")
 
     graph.add_conditional_edges(
@@ -492,12 +560,43 @@ def build_orchestrator_graph(
     return graph
 
 
+# Fraction of tasks reserved for holdout generalization check.
+HOLDOUT_FRACTION = 0.3
+MIN_HOLDOUT = 1
+MIN_TRAINING = 2
+
+
+def _split_tasks(
+    tasks: list[str],
+    holdout_fraction: float = HOLDOUT_FRACTION,
+) -> tuple[list[str], list[str]]:
+    """Split tasks into training and holdout sets.
+
+    Holdout tasks are used to measure generalization after prompt optimization.
+    Uses a stable shuffle so the split is reproducible.
+    """
+    if len(tasks) <= MIN_TRAINING + MIN_HOLDOUT:
+        # Too few tasks to split meaningfully — use all for training
+        return list(tasks), []
+
+    shuffled = list(tasks)
+    random.Random(42).shuffle(shuffled)
+    n_holdout = max(MIN_HOLDOUT, int(len(shuffled) * holdout_fraction))
+    # Ensure we keep at least MIN_TRAINING for the optimizer
+    n_holdout = min(n_holdout, len(shuffled) - MIN_TRAINING)
+    return shuffled[n_holdout:], shuffled[:n_holdout]
+
+
 def run_evolution(
     settings: Settings,
     tasks: list[str],
     max_cycles: int | None = None,
 ) -> list[EvolutionMetrics]:
     """Run the full inner-loop evolution.
+
+    Tasks are split into training (used for optimization) and holdout
+    (used to measure generalization). Each cycle samples batch_size tasks
+    from the training pool with rotation.
 
     When the inner loop plateaus, it persists state to evolution_state/
     for the outer-loop coding agent to pick up.
@@ -510,11 +609,23 @@ def run_evolution(
     if prompt_store.get_latest_version_number() == 0:
         prompt_store.add_version(DEFAULT_SYSTEM_PROMPT, score=None)
 
+    training_tasks, holdout_tasks = _split_tasks(tasks)
+    if holdout_tasks:
+        logger.info(
+            "Task split: %d training, %d holdout",
+            len(training_tasks),
+            len(holdout_tasks),
+        )
+    else:
+        logger.info("All %d tasks used for training (too few to split)", len(tasks))
+
     graph = build_orchestrator_graph(settings, llm, prompt_store, memory_store)
     compiled = graph.compile()
 
     initial_state: OrchestratorState = {
-        "tasks": tasks,
+        "tasks": training_tasks,
+        "holdout_tasks": holdout_tasks,
+        "batch_size": settings.batch_size,
         "current_cycle": 0,
         "max_cycles": max_cycles,
         "trajectories": [],
@@ -524,7 +635,12 @@ def run_evolution(
         "should_continue": True,
     }
 
-    logger.info("Starting inner-loop evolution: %d tasks, max %d cycles", len(tasks), max_cycles)
+    logger.info(
+        "Starting inner-loop evolution: %d tasks (batch_size=%d), max %d cycles",
+        len(training_tasks),
+        settings.batch_size,
+        max_cycles,
+    )
     result = compiled.invoke(initial_state)
 
     metrics = result.get("cycle_metrics", [])

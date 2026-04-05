@@ -123,13 +123,50 @@ class PromptStore:
         return pv
 
     def update_score(self, version: int, score: float) -> None:
-        """Update the score for an existing prompt version."""
+        """Update the score for an existing prompt version.
+
+        Uses incremental averaging: new_avg = old_avg + (score - old_avg) / n.
+        This way every run contributes to the prompt's score without needing
+        to store all individual scores.
+        """
         pv = self.get_version(version)
         if pv is None:
             logger.warning("Cannot update score: version %d not found", version)
             return
-        pv.score = score
+
         path = self._version_path(version)
+        # Load raw dict to access score_count (not in PromptVersion dataclass)
+        with open(path) as f:
+            data = json.load(f)
+
+        n = data.get("score_count", 1 if pv.score is not None else 0)
+        if n == 0 or pv.score is None:
+            pv.score = score
+            n = 1
+        else:
+            n += 1
+            pv.score = pv.score + (score - pv.score) / n
+
+        data["score"] = round(pv.score, 4)
+        data["score_count"] = n
         with open(path, "w") as f:
-            json.dump(pv.to_dict(), f, indent=2)
-        logger.info("Updated score for version %d to %.3f", version, score)
+            json.dump(data, f, indent=2)
+        logger.info("Updated score for version %d to %.4f (n=%d)", version, pv.score, n)
+
+    def append_feedback(self, version: int, feedback: str) -> None:
+        """Append a feedback entry to an existing prompt version."""
+        path = self._version_path(version)
+        if not path.exists():
+            logger.warning("Cannot append feedback: version %d not found", version)
+            return
+        with open(path) as f:
+            data = json.load(f)
+        existing = data.get("feedback_summary", "")
+        # Keep feedback compact — cap at ~500 chars
+        if len(existing) > 500:
+            return
+        separator = "; " if existing else ""
+        data["feedback_summary"] = existing + separator + feedback
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        logger.info("Appended feedback to version %d", version)

@@ -1,7 +1,7 @@
 """Tests for memory compression."""
 
-from evoagent.memory.store import FileMemoryStore
 from evoagent.memory.compression import compress_context, deduplicate_semantic
+from evoagent.memory.store import FileMemoryStore
 
 
 def test_compress_empty_memory(tmp_path):

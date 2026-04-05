@@ -18,9 +18,15 @@ PARTIAL_THRESHOLD = 0.50
 MIN_PASS_COUNT = 2
 MIN_AVERAGE_SCORE = 0.60
 
+# Graders whose failure caps the classification at "partial" regardless of average.
+CRITICAL_GRADERS: set[str] = {"task_completion"}
+
 
 def classify_trajectory(grader_results: list[GraderResult]) -> tuple[str, float]:
     """Classify a trajectory based on grader results.
+
+    A failing critical grader (e.g. task_completion) caps the result at
+    "partial" so the prompt optimizer receives a signal to improve.
 
     Returns (classification, average_score).
     """
@@ -31,8 +37,12 @@ def classify_trajectory(grader_results: list[GraderResult]) -> tuple[str, float]
     avg_score = sum(scores) / len(scores)
     pass_count = sum(1 for g in grader_results if g.passed)
 
+    critical_failed = any(
+        not g.passed for g in grader_results if g.name in CRITICAL_GRADERS
+    )
+
     if pass_count >= MIN_PASS_COUNT and avg_score >= MIN_AVERAGE_SCORE:
-        if avg_score >= SUCCESSFUL_THRESHOLD:
+        if avg_score >= SUCCESSFUL_THRESHOLD and not critical_failed:
             return "successful", round(avg_score, 3)
         return "partial", round(avg_score, 3)
 

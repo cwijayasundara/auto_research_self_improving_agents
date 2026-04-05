@@ -1,5 +1,5 @@
 """Trace capture and trajectory models."""
 
-from evoagent.tracing.trajectory import TrajectoryRecord, ToolCall
+from evoagent.tracing.trajectory import ToolCall, TrajectoryRecord
 
-__all__ = ["TrajectoryRecord", "ToolCall"]
+__all__ = ["ToolCall", "TrajectoryRecord"]

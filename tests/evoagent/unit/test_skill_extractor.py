@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from evoagent.skills.extractor import is_duplicate_skill, extract_skills_from_batch
+from evoagent.skills.extractor import extract_skills_from_batch, is_duplicate_skill
 from evoagent.skills.manager import SkillManager
 
 

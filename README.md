@@ -6,34 +6,34 @@ A self-improving research agent built on the **`evoagent`** library, combining t
 2. **LangChain harness engineering** — middleware stack (self-verification, loop detection, context assembly, trace capture) that improves agent quality in real-time
 3. **Letta's continual learning** — sleep-time compute, episodic/semantic memory, and skill extraction that improve the agent across sessions
 
-## Architecture: 4-Layer Self-Improvement
+## Architecture: Continuous Self-Improvement
+
+The system self-improves through three modes of operation:
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│  OUTER LOOP — Karpathy autoresearch pattern               │
-│  (prompt_optimizer.py, analyzer.py, orchestrator)         │
-│                                                           │
-│  Propose new prompt → Run eval tasks → Grade → Keep?      │
-│                                                           │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │  HARNESS LAYER — LangChain/Stanford Meta-Harness    │  │
-│  │  (evoagent.harness.middleware)                       │  │
-│  │                                                     │  │
-│  │  SelfVerification, ContextAssembly, LoopDetection   │  │
-│  │  TraceCaptureMiddleware → feeds back to outer loop   │  │
-│  │                                                     │  │
-│  │  ┌───────────────────────────────────────────────┐  │  │
-│  │  │  INNER LOOP — The agent itself                │  │  │
-│  │  │  (deep_agent.py, LLM calls, tool use)         │  │  │
-│  │  │                                               │  │  │
-│  │  │  Think → Search → Synthesize → Write report   │  │  │
-│  │  └───────────────────────────────────────────────┘  │  │
-│  └─────────────────────────────────────────────────────┘  │
-│                                                           │
-│  SLEEP-TIME COMPUTE — Letta continual learning            │
-│  (evoagent.evolution.sleep_review)                        │
-│  Cross-run analysis → meta-instructions → memory          │
-└───────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  OUTER LOOP — Karpathy autoresearch pattern                  │
+│  Coding agent reads evolution_state/ and makes structural    │
+│  changes when the inner loop plateaus                        │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  BACKGROUND DAEMON — Continuous self-evolution          │  │
+│  │  Watches run_log.jsonl → optimizes prompt, extracts     │  │
+│  │  skills, creates failure skills, compresses memory      │  │
+│  │                                                        │  │
+│  │  ┌──────────────────────────────────────────────────┐  │  │
+│  │  │  HARNESS LAYER — Real-time middleware             │  │  │
+│  │  │  SelfVerification, ContextAssembly, LoopDetection │  │  │
+│  │  │                                                  │  │  │
+│  │  │  ┌────────────────────────────────────────────┐  │  │  │
+│  │  │  │  AGENT — Think → Search → Synthesize       │  │  │  │
+│  │  │  │  Every run: grade → score → reflect → log  │  │  │  │
+│  │  │  └────────────────────────────────────────────┘  │  │  │
+│  │  └──────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  SLEEP-TIME COMPUTE — Cross-run trace analysis → memory      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Prerequisites
@@ -59,30 +59,81 @@ pip install -e .
 cp .env.example .env
 # Edit .env with your API keys (at minimum: OPENAI_API_KEY)
 
-# 5. Run a single research task
+# 5. Run a single research task (grades, scores prompt, stores memory)
 python -m src run "What are the latest advances in quantum computing?"
 
-# 6. Run the evolution loop (3 cycles)
+# 6. Start the background evolution daemon (in a separate terminal)
+python -m src evolve-daemon --interval 60 --min-runs 3
+
+# 7. Or run the batch evolution loop (3 cycles with task sampling + holdout)
 python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 3
 
-# 7. Run sleep-time review (cross-run trace analysis)
+# 8. Run sleep-time review (cross-run trace analysis)
 python -m src sleep-review
 ```
+
+## How the Agent Self-Improves
+
+### From every single user interaction
+
+Every `python -m src run "..."` automatically:
+
+1. **Grades** the output on 4 dimensions (task completion, efficiency, quality, claim verification)
+2. **Scores** the current prompt version (incremental averaging across runs)
+3. **Logs feedback** on failing dimensions to the prompt version
+4. **Reflects** — LLM introspection stores episodic + semantic memories
+5. **Appends** structured results to `evolution_state/run_log.jsonl`
+
+### Background evolution daemon
+
+The daemon (`python -m src evolve-daemon`) runs alongside the serving agent:
+
+```
+┌─────────────┐     append      ┌──────────────┐
+│  User runs   │ ──────────────→ │  run_log.jsonl │
+│  (Terminal 1)│                 └──────┬───────┘
+└─────────────┘                        │ poll (60s)
+                                       ▼
+                                ┌──────────────┐
+                                │  Daemon       │  triggers when 3+ runs
+                                │  (Terminal 2) │  have accumulated
+                                └──────┬───────┘
+                                       │ writes
+                         ┌─────────────┼─────────────┐
+                         ▼             ▼             ▼
+                    prompts/v*    skills/SKILL.md   memory/
+                         │
+                         ▼
+                 Next user run picks up
+                 the improved prompt
+```
+
+The daemon never re-runs tasks — it works entirely on grading results from real user interactions, making it lightweight and responsive to actual usage patterns.
+
+### Batch evolution loop
+
+The batch `evolve` command runs a full optimization loop with:
+
+- **Task sampling** — samples `batch_size` (default 3) tasks per cycle from the training pool, rotating across cycles
+- **Holdout evaluation** — reserves ~30% of tasks as a holdout set to measure generalization (scores logged independently, not fed back into the optimizer)
+- **Critical grader gate** — if `task_completion` fails, the trajectory is capped at "partial" regardless of average score, ensuring the optimizer always receives signal from the most important dimension
+- **Per-dimension diagnostics** — the prompt optimizer sees which specific grading dimensions are bottlenecks (not just an opaque average)
+- **Autonomy-safe retries** — when the optimizer generates prompts with forbidden patterns, retries include specific violation feedback; as a last resort, offending lines are stripped automatically
 
 ## Running Tests
 
 ```bash
-# All tests (188 total)
-PYTHONPATH=. python -m pytest tests/evoagent/ tests/unit/ -v
+# All tests (259 total)
+make test
 
-# Evoagent library only (52 tests, no API keys needed)
-PYTHONPATH=. python -m pytest tests/evoagent/ -v
+# With coverage
+make test-cov
 
-# Research agent tests (136 tests, mocked LLM)
-PYTHONPATH=. python -m pytest tests/unit/ -v
-
-# E2E grader test with real LLM (needs API keys in .env)
-PYTHONPATH=. python test_graders.py
+# Specific test suites
+.venv/bin/python -m pytest tests/evoagent/unit/ -v      # Library unit tests
+.venv/bin/python -m pytest tests/evoagent/integration/ -v # Library integration
+.venv/bin/python -m pytest tests/unit/ -v                # Application tests
+.venv/bin/python -m pytest tests/evoagent/e2e/ -v        # E2E evolution loop
 ```
 
 ---
@@ -208,7 +259,7 @@ evoagent/                         # Reusable library
 │   ├── multi_judge.py            # MultiJudgeGrader (parallel LLM judges, median aggregation)
 │   └── efficiency.py             # EfficiencyGrader (rule-based, no LLM)
 ├── evolution/                    # Layer 3: full loop (needs langgraph)
-│   ├── analyzer.py               # Run graders, classify trajectories
+│   ├── analyzer.py               # Run graders, classify trajectories (with critical grader gate)
 │   ├── prompt_optimizer.py       # Metaprompt-based prompt rewriting + autonomy validation
 │   ├── sleep_review.py           # Cross-run trace analysis (sleep-time compute)
 │   └── state.py                  # Evolution state persistence
@@ -222,9 +273,13 @@ evoagent/                         # Reusable library
 
 The `src/` directory is a **reference application** built on `evoagent`. It demonstrates the full two-speed evolution pattern applied to research task automation.
 
+### Self-improvement from every run
+
+Every single `python -m src run "..."` grades, scores, reflects, and logs results. The background evolution daemon picks up accumulated results and triggers prompt optimization, skill extraction, and failure skill creation without any manual intervention.
+
 ### Failure-driven skill creation
 
-The key differentiator: instead of only learning from successes, the system creates **defensive "antibody" skills** from failures. When the agent fails at a task, the skill extractor:
+Instead of only learning from successes, the system creates **defensive "antibody" skills** from failures. When the agent fails at a task, the skill extractor:
 
 1. Groups failures by pattern (which grader failed)
 2. Analyzes the failure trajectories
@@ -233,45 +288,53 @@ The key differentiator: instead of only learning from successes, the system crea
 
 ### Running the inner loop
 
-The inner loop is the automatic self-evolution engine. It runs the agent on research tasks, grades the output, reflects, extracts skills, and optimizes the prompt — all without human intervention.
-
 ```bash
-# Run 3 evolution cycles on the default research dataset
+# Run 3 evolution cycles with task sampling + holdout
 python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 3
 ```
 
-Each cycle runs a **10-node LangGraph pipeline**:
+Each cycle runs an **11-node LangGraph pipeline**:
 
 ```
-1. run_batch          — Execute the agent on all tasks (5-min timeout per task)
-2. fetch_traces       — Optionally enrich from LangSmith
-3. analyze            — Grade each trajectory: task_completion, efficiency, quality, claims
-4. reflect            — LLM generates introspection → stores episodic + semantic memories
-5. compress_memories  — Deduplicate semantic memories
-6. extract_skills     — From successful runs (score >= 0.70) → creates SKILL.md files
+1. run_batch            — Sample batch_size tasks from training pool (rotated per cycle)
+2. fetch_traces         — Optionally enrich from LangSmith
+3. analyze              — Grade each trajectory: task_completion, efficiency, quality, claims
+4. reflect              — LLM generates introspection → stores episodic + semantic memories
+5. compress_memories    — Deduplicate semantic memories
+6. extract_skills       — From successful runs (score >= 0.70) → creates SKILL.md files
 7. create_failure_skills — From failure patterns (2+ failures) → defensive SKILL.md files
-8. optimize_prompt    — Failure-aware + skill-aware prompt rewriting → new prompt version
-9. persist_state      — Write evolution_state/ files for the outer loop
-10. aggregate_metrics — Compute cycle summary, check for plateau (< 5% improvement x 2 cycles)
+8. optimize_prompt      — Failure-aware + skill-aware + dimension-aware prompt rewriting
+9. holdout_check        — Run holdout tasks to measure generalization (scores not fed back)
+10. persist_state       — Write evolution_state/ files for the outer loop
+11. aggregate_metrics   — Compute cycle summary, check for plateau
 ```
+
+### Running the background daemon
+
+```bash
+# Start the daemon (run in a separate terminal)
+python -m src evolve-daemon --interval 60 --min-runs 3
+```
+
+The daemon polls `run_log.jsonl` every 60 seconds. When 3+ unprocessed runs accumulate, it triggers lightweight evolution: prompt optimization, skill extraction, failure skill creation, and memory compression — all without re-running tasks.
 
 ### Viewing artifacts
 
 ```bash
-python -m src skills      # List learned skills
-python -m src prompts     # Show prompt version history
-python -m src memory      # Browse episodic and semantic memories
-python -m src state       # Show evolution state
+python -m src skills        # List learned skills
+python -m src prompts       # Show prompt version history (with scores from single runs)
+python -m src memory        # Browse episodic and semantic memories
+python -m src state         # Show evolution state
 python -m src sleep-review  # Run cross-run trace analysis
 ```
 
 | Directory          | Contents                                                                |
 | ------------------ | ----------------------------------------------------------------------- |
 | `skills/`          | SKILL.md files — success patterns + defensive "antibody" skills         |
-| `prompts/`         | Versioned prompt JSON files (`v0001.json`, `v0002.json`, ...)           |
+| `prompts/`         | Versioned prompt JSON files with incremental scores and feedback        |
 | `memory/episodic/` | One JSON per agent run (task, strategy, score, what worked)             |
 | `memory/semantic/` | Extracted facts and patterns (reusable across tasks)                    |
-| `evolution_state/` | Human-readable state for the outer loop (`failures.md`, `hypotheses.md`)|
+| `evolution_state/` | Inner→outer loop bridge files + `run_log.jsonl` for daemon             |
 
 ### Running the outer loop
 
@@ -293,17 +356,6 @@ cat evolution_state/plateau_report.md
 # 4. Make structural changes, re-run, keep or revert
 ```
 
-Each iteration:
-
-```
-1. Run inner loop → read evolution_state/*.md
-2. Decide what structural change to make
-3. Make ONE change, git commit
-4. Re-run inner loop to validate
-5. If score improved → KEEP commit
-   If score same/worse → git reset --hard
-```
-
 ### Configuration
 
 Key settings in `.env`:
@@ -313,6 +365,7 @@ MODEL=gpt-4o                          # Model for agent and graders
 MODEL_PROVIDER=openai
 TAVILY_API_KEY=tvly-...               # Optional (DuckDuckGo fallback is free)
 MAX_EVOLUTION_CYCLES=5                # Inner loop cycles
+BATCH_SIZE=3                          # Tasks sampled per evolution cycle
 MEMORY_TOKEN_BUDGET=4000              # Memory context budget (chars / 4)
 USE_SUBAGENTS=true                    # Enable research + synthesis sub-agents
 ```
@@ -333,18 +386,18 @@ evoagent/                             # Reusable library (see above)
 src/                                  # Research agent application (uses evoagent)
 ├── agent/
 │   ├── deep_agent.py                 # LangGraph agent with evoagent middleware
-│   ├── prompts.py                    # Research-specific prompt templates
-│   ├── prompt_store.py               # Versioned prompt persistence
+│   ├── prompts.py                    # Research-specific prompt + metaprompt templates
+│   ├── prompt_store.py               # Versioned prompt persistence with incremental scoring
 │   └── subagents.py                  # Research + synthesis sub-agents
 ├── evolution/
-│   ├── orchestrator.py               # Two-speed evolution loop (10 LangGraph nodes)
-│   ├── analyzer.py                   # 4-grader analysis using evoagent graders
-│   ├── prompt_optimizer.py           # Skill-aware prompt optimization
+│   ├── orchestrator.py               # 11-node evolution loop with task sampling + holdout
+│   ├── analyzer.py                   # 4-grader analysis with critical grader gate
+│   ├── prompt_optimizer.py           # Dimension-aware prompt optimization with violation feedback
+│   ├── daemon.py                     # Background evolution daemon (watches run_log)
+│   ├── run_log.py                    # Append-only JSONL run log for daemon consumption
 │   ├── evolution_state_bridge.py     # Bridge inner→outer loop
 │   ├── state.py                      # LangGraph state schemas (imports evoagent types)
 │   └── graders/                      # Research-specific graders
-│       ├── quality.py                # Output quality
-│       ├── task_completion.py        # Task completion
 │       ├── claim_verification.py     # Claim extraction + internal consistency
 │       └── fact_checker.py           # Web-based spot-check verification
 ├── memory/
@@ -356,22 +409,22 @@ src/                                  # Research agent application (uses evoagen
 ├── config/
 │   └── settings.py                   # App-level settings
 └── cli/
-    └── commands.py                   # CLI: run, evolve, sleep-review, etc.
+    └── commands.py                   # CLI: run, evolve, evolve-daemon, sleep-review, etc.
 
 tests/
-├── evoagent/                         # Library tests (52 tests)
+├── evoagent/                         # Library tests
 │   ├── unit/                         # Types, parsing, config, memory, skills, efficiency
 │   ├── integration/                  # Multi-judge grader, middleware, analyzer
 │   └── e2e/                          # Full evolution loop with toy agent
-└── unit/                             # Application tests (136 tests)
-    ├── test_multi_judge.py           # MultiJudgeGrader tests
+└── unit/                             # Application tests
+    ├── test_analyzer_parallel.py     # 4-grader analyzer + critical grader gate tests
     ├── test_claim_verification.py    # Claim verification tests
     ├── test_fact_checker.py          # Fact checker tests
-    ├── test_analyzer_parallel.py     # 4-grader analyzer tests
+    ├── test_multi_judge.py           # MultiJudgeGrader tests
     ├── test_pairwise.py              # Pairwise prompt comparison tests
     └── test_prompts.py               # Prompt template tests
 
-evolution_state/                      # Bridge to outer-loop coding agent
+evolution_state/                      # Runtime: bridge to outer-loop + run_log.jsonl
 program.md                            # Instructions for the outer-loop coding agent
 tasks/research_tasks.json             # Evaluation dataset
 ```

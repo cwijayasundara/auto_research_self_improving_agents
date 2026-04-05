@@ -1,6 +1,5 @@
 """Tests for EvoAgentConfig."""
 
-from pathlib import Path
 
 from evoagent.core.config import EvoAgentConfig
 

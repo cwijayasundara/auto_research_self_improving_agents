@@ -58,8 +58,11 @@ class Settings(BaseSettings):
     memory_dir: str = "memory"
     evolution_state_dir: str = "evolution_state"
 
+    # Traces directory
+    traces_dir: str = "traces"
+
     # Memory compression
-    memory_token_budget: int = 1000
+    memory_token_budget: int = 4000
     compression_similarity_threshold: float = 0.7
 
     # Sub-agents
@@ -88,6 +91,10 @@ class Settings(BaseSettings):
     @property
     def evolution_state_path(self) -> Path:
         return PROJECT_ROOT / self.evolution_state_dir
+
+    @property
+    def traces_path(self) -> Path:
+        return PROJECT_ROOT / self.traces_dir
 
 
 def load_settings() -> Settings | None:

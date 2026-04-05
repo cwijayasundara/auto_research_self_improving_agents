@@ -1,6 +1,6 @@
 """Tests for evoagent core types."""
 
-from evoagent.core.types import GraderResult, TaskResult, TrajectoryMetrics, EvolutionCycleReport
+from evoagent.core.types import EvolutionCycleReport, GraderResult, TaskResult, TrajectoryMetrics
 
 
 def test_grader_result_fields():

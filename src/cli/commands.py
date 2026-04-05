@@ -11,7 +11,7 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 
-from src.agent.deep_agent import create_agent, extract_output
+from src.agent.deep_agent import create_agent, create_llm, extract_output
 from src.agent.prompt_store import PromptStore
 from src.config.settings import Settings, configure_logging, export_langsmith_env, load_settings
 from src.evolution.orchestrator import run_evolution
@@ -22,7 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 def cmd_run(settings: Settings, task: str) -> None:
-    """Run the agent on a single task."""
+    """Run the agent on a single task, then grade and learn from the result."""
+    import time
+    import uuid
+
+    from src.evolution.analyzer import analyze_trajectory
+    from src.memory.reflection import reflect_and_store
+    from evoagent.tracing.trajectory import TrajectoryRecord
+
     prompt_store = PromptStore(settings.prompts_path)
     memory_store = FileMemoryStore(settings.memory_path)
 
@@ -31,14 +38,111 @@ def cmd_run(settings: Settings, task: str) -> None:
 
         prompt_store.add_version(DEFAULT_SYSTEM_PROMPT, score=None)
 
+    # --- Run the agent ---
     agent = create_agent(settings, prompt_store, memory_store, task=task)
+    start = time.monotonic()
     result = agent.invoke({"messages": [HumanMessage(content=task)]})
+    latency = time.monotonic() - start
     output = extract_output(result)
 
     print("\n" + "=" * 60)
     print("AGENT OUTPUT")
     print("=" * 60)
     print(output)
+
+    # --- Grade the result ---
+    messages = result.get("messages", [])
+    total_steps = len(messages)
+    total_tokens = sum(len(getattr(m, "content", "") or "") // 4 for m in messages)
+
+    traj = TrajectoryRecord(
+        run_id=str(uuid.uuid4()),
+        task=task,
+        output=output,
+        status="completed",
+        total_tokens=total_tokens,
+        total_steps=total_steps,
+        latency_seconds=latency,
+        tool_call_count=0,
+    )
+
+    llm = create_llm(settings)
+    try:
+        from src.tools.search import create_search_tool
+
+        search_tool = create_search_tool(settings)
+    except Exception:
+        search_tool = None
+
+    try:
+        analysis = analyze_trajectory(llm, traj, search_tool=search_tool)
+        graders = analysis["grader_results"]
+        print("\n" + "-" * 60)
+        print("GRADING")
+        print("-" * 60)
+        for g in graders:
+            status = "PASS" if g.passed else "FAIL"
+            print(f"  {g.name}: {g.score:.2f} ({status})")
+        print(f"  OVERALL: {analysis['average_score']:.3f} ({analysis['classification']})")
+    except Exception as exc:
+        logger.error("Grading failed: %s", exc)
+        return
+
+    # --- Score the current prompt version ---
+    current_version = prompt_store.get_latest_version_number()
+    prompt_store.update_score(current_version, analysis["average_score"])
+
+    # --- Log per-dimension feedback on failures ---
+    failed_dims = [g for g in graders if not g.passed]
+    if failed_dims:
+        feedback = "; ".join(
+            f"{g.name}={g.score:.2f}: {g.reasoning[:80]}" for g in failed_dims
+        )
+        prompt_store.append_feedback(current_version, feedback)
+
+    # --- Append to run log for background evolution daemon ---
+    try:
+        from dataclasses import asdict
+
+        from src.evolution.run_log import RunLog, RunLogEntry
+
+        run_log = RunLog(settings.evolution_state_path / "run_log.jsonl")
+        run_log.append(
+            RunLogEntry(
+                run_id=traj.run_id,
+                task=task,
+                output=output,
+                classification=analysis["classification"],
+                average_score=analysis["average_score"],
+                grader_results=[asdict(g) for g in graders],
+                prompt_version=current_version,
+            )
+        )
+    except Exception as exc:
+        logger.error("Run log append failed: %s", exc)
+
+    # --- Learn from the result ---
+    try:
+        from dataclasses import asdict
+
+        grader_dict = {
+            "average_score": analysis["average_score"],
+            "classification": analysis["classification"],
+            "graders": [asdict(g) for g in graders],
+        }
+        reflect_and_store(
+            llm=llm,
+            memory_store=memory_store,
+            run_id=traj.run_id,
+            task=task,
+            output=output,
+            tool_calls=[],
+            grader_results=grader_dict,
+        )
+        print(f"\n  Reflection stored. Memories: {memory_store.count('episodic')} episodic, "
+              f"{memory_store.count('semantic')} semantic")
+    except Exception as exc:
+        logger.error("Reflection failed: %s", exc)
 
 
 def cmd_evolve(settings: Settings, tasks_file: str, max_cycles: int) -> None:
@@ -241,6 +345,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run offline cross-run trace analysis (sleep-time compute)",
     )
 
+    # evolve-daemon
+    daemon_parser = subparsers.add_parser(
+        "evolve-daemon",
+        help="Background evolution daemon — watches run log and self-improves",
+    )
+    daemon_parser.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Seconds between polling the run log (default: 60)",
+    )
+    daemon_parser.add_argument(
+        "--min-runs",
+        type=int,
+        default=3,
+        help="Minimum unprocessed runs before triggering evolution (default: 3)",
+    )
+
     return parser
 
 
@@ -273,3 +395,7 @@ def main() -> None:
         cmd_state(settings)
     elif args.command == "sleep-review":
         cmd_sleep_review(settings)
+    elif args.command == "evolve-daemon":
+        from src.evolution.daemon import run_daemon
+
+        run_daemon(settings, poll_interval=args.interval, min_runs=args.min_runs)

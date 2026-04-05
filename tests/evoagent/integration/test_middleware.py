@@ -1,7 +1,6 @@
 """Tests for harness middleware."""
 
 from evoagent.harness.middleware import (
-    SelfVerificationMiddleware,
     LoopDetectionMiddleware,
     check_output,
     is_similar_query,

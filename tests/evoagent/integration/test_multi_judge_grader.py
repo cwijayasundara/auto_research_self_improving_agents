@@ -2,9 +2,8 @@
 
 from unittest.mock import MagicMock
 
-from langchain_core.messages import AIMessage
-
 from evoagent.graders.multi_judge import MultiJudgeGrader
+from langchain_core.messages import AIMessage
 
 
 def _mock_llm(*responses):

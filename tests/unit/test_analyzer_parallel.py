@@ -62,6 +62,20 @@ class TestClassifyTrajectoryFourGraders:
         assert classification == "successful"
         assert avg >= 0.75
 
+    def test_critical_grader_fail_caps_at_partial(self):
+        """task_completion failing caps classification at partial even with high avg."""
+        graders = [
+            _make_grader("task_completion", 0.4, False),
+            _make_grader("efficiency", 0.95, True),
+            _make_grader("quality", 0.90, True),
+            _make_grader("claim_verification", 1.0, True),
+        ]
+        classification, avg = classify_trajectory(graders)
+        # avg = (0.4 + 0.95 + 0.90 + 1.0) / 4 = 0.8125 — above 0.75
+        # but task_completion failed, so capped at partial
+        assert classification == "partial"
+        assert avg >= 0.75
+
     def test_two_pass_medium_avg_is_partial(self):
         """2 graders pass, avg >= 0.6 but < 0.75 -> partial."""
         graders = [

@@ -1,10 +1,9 @@
 """E2E test for evolution components with a toy agent."""
 
-from evoagent.core.config import EvoAgentConfig
 from evoagent.core.protocols import AgentFactory
-from evoagent.core.types import TaskResult, TrajectoryMetrics, GraderResult
-from evoagent.graders.efficiency import EfficiencyGrader
+from evoagent.core.types import TaskResult, TrajectoryMetrics
 from evoagent.evolution.analyzer import analyze_trajectory, classify_trajectory
+from evoagent.graders.efficiency import EfficiencyGrader
 from evoagent.memory.store import FileMemoryStore
 from evoagent.skills.manager import SkillManager
 

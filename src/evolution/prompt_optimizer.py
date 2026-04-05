@@ -114,14 +114,47 @@ def _build_trace_digest(task: str, traces_dir: Path | None = None) -> str:
     return "\n".join(parts)
 
 
+def _build_dimension_breakdown(analyses: list[AnalysisResult]) -> str:
+    """Build a per-dimension score summary across all trajectories.
+
+    Helps the prompt optimizer see which grading dimension is the bottleneck
+    rather than just seeing an opaque average score.
+    """
+    from collections import defaultdict
+
+    dim_scores: dict[str, list[float]] = defaultdict(list)
+    dim_fails: dict[str, int] = defaultdict(int)
+
+    for analysis in analyses:
+        for grader in analysis["grader_results"]:
+            dim_scores[grader.name].append(grader.score)
+            if not grader.passed:
+                dim_fails[grader.name] += 1
+
+    if not dim_scores:
+        return ""
+
+    total = len(analyses)
+    lines = ["Dimension | Avg Score | Fail Rate | Status"]
+    lines.append("--- | --- | --- | ---")
+    for name in sorted(dim_scores.keys()):
+        scores = dim_scores[name]
+        avg = sum(scores) / len(scores)
+        fail_rate = dim_fails[name] / total
+        status = "BOTTLENECK" if fail_rate > 0.5 else "OK" if fail_rate == 0 else "WEAK"
+        lines.append(f"{name} | {avg:.2f} | {fail_rate:.0%} | {status}")
+
+    return "\n".join(lines)
+
+
 def analyze_failures(
     analyses: list[AnalysisResult],
     traces_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate failure patterns from failed/partial trajectories.
 
-    Enhanced with trace digest: reads execution traces from disk to provide
-    the prompt optimizer with deeper diagnostic context (Meta-Harness pattern).
+    Enhanced with trace digest and per-dimension breakdown to give the
+    prompt optimizer actionable diagnostic context.
     """
     failed = [a for a in analyses if a["classification"] in ("failed", "partial")]
     if not failed:
@@ -129,6 +162,7 @@ def analyze_failures(
             "failure_analysis": "No failures to analyze.",
             "common_issues": [],
             "trace_digest": "",
+            "dimension_breakdown": "",
         }
 
     issues: list[str] = []
@@ -157,6 +191,7 @@ def analyze_failures(
         "failure_analysis": failure_summary,
         "common_issues": unique_issues[:10],
         "trace_digest": "\n\n".join(trace_digests) if trace_digests else "",
+        "dimension_breakdown": _build_dimension_breakdown(analyses),
     }
 
 
@@ -176,18 +211,21 @@ def generate_improved_prompt(
     can reference them for better integration.
 
     Includes autonomy validation — if the generated prompt contains patterns
-    that would cause the agent to ask the user for input, it retries up to
-    MAX_AUTONOMY_RETRIES times, then falls back to the current prompt.
+    that would cause the agent to ask the user for input, it retries with
+    explicit feedback about the violation, up to MAX_AUTONOMY_RETRIES times,
+    then falls back to the current prompt.
     """
-    meta = METAPROMPT_TEMPLATE.format(
+    base_meta = METAPROMPT_TEMPLATE.format(
         current_prompt=current_prompt,
         current_score=f"{current_score:.3f}",
         failure_analysis=failure_info["failure_analysis"],
         common_issues="\n".join(f"- {i}" for i in failure_info["common_issues"]),
         available_skills=skills_summary or "No skills learned yet.",
         trace_digest=failure_info.get("trace_digest", "No trace data available."),
+        dimension_breakdown=failure_info.get("dimension_breakdown", ""),
     )
 
+    meta = base_meta
     for attempt in range(1 + MAX_AUTONOMY_RETRIES):
         response = llm.invoke([HumanMessage(content=meta)])
         improved = response.content.strip()
@@ -206,13 +244,52 @@ def generate_improved_prompt(
             ", ".join(violations),
         )
 
-    # All retries failed — keep the current prompt to avoid drift
+        # Inject specific violation feedback for the next attempt
+        violation_list = ", ".join(f'"{v}"' for v in violations)
+        meta = (
+            base_meta
+            + f"\n\n## VIOLATION FEEDBACK FROM PREVIOUS ATTEMPT\n"
+            f"Your previous output was REJECTED because it contained these "
+            f"forbidden patterns: {violation_list}.\n"
+            f"These phrases MUST NOT appear anywhere in the prompt — not even "
+            f"in a negation like 'do not ask the user'. Instead of referencing "
+            f"user interaction at all, simply instruct the agent to act "
+            f"autonomously and produce a complete report.\n"
+            f"Generate the prompt again WITHOUT any of these patterns."
+        )
+
+    # All retries failed — strip violations from the last attempt
+    cleaned = _strip_autonomy_violations(improved)
+    remaining = validate_prompt_autonomy(cleaned)
+    if not remaining:
+        logger.info(
+            "Prompt autonomy violations stripped automatically after %d failed attempts.",
+            1 + MAX_AUTONOMY_RETRIES,
+        )
+        return cleaned
+
+    # Truly stuck — keep the current prompt to avoid drift
     logger.error(
         "Prompt optimizer failed autonomy validation after %d attempts. "
         "Keeping current prompt to prevent drift.",
         1 + MAX_AUTONOMY_RETRIES,
     )
     return current_prompt
+
+
+def _strip_autonomy_violations(prompt: str) -> str:
+    """Remove lines containing autonomy violation patterns as a last resort."""
+    lines = prompt.split("\n")
+    clean_lines: list[str] = []
+    for line in lines:
+        has_violation = False
+        for pattern, _ in _AUTONOMY_VIOLATION_PATTERNS:
+            if pattern.search(line):
+                has_violation = True
+                break
+        if not has_violation:
+            clean_lines.append(line)
+    return "\n".join(clean_lines)
 
 
 def _select_tasks_for_mini_scoring(
