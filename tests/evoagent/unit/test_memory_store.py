@@ -55,6 +55,6 @@ def test_unknown_namespace_raises(tmp_path):
     store = FileMemoryStore(tmp_path)
     try:
         store.store("unknown_ns", "key", {})
-        assert False, "Should have raised ValueError"
+        raise AssertionError("Should have raised ValueError")
     except ValueError:
         pass

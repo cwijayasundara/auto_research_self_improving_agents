@@ -33,5 +33,5 @@ def test_load_missing_skill(tmp_path):
 def test_validate_skill(tmp_path):
     mgr = SkillManager(tmp_path)
     path = mgr.create("valid", "A valid skill", "# Content\nSome body text")
-    is_valid, msg = mgr.validate(path)
+    is_valid, _msg = mgr.validate(path)
     assert is_valid

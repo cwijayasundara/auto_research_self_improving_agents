@@ -1,7 +1,7 @@
 """Tests for trajectory analyzer."""
 
 from evoagent.core.types import GraderResult, TrajectoryMetrics
-from evoagent.evolution.analyzer import classify_trajectory, analyze_trajectory
+from evoagent.evolution.analyzer import analyze_trajectory, classify_trajectory
 from evoagent.graders.efficiency import EfficiencyGrader
 
 
@@ -21,14 +21,14 @@ def test_classify_failed():
         GraderResult(name="a", score=0.2, passed=False, reasoning="bad"),
         GraderResult(name="b", score=0.3, passed=False, reasoning="bad"),
     ]
-    classification, avg = classify_trajectory(results)
+    classification, _avg = classify_trajectory(results)
     assert classification == "failed"
 
 
 def test_classify_empty():
-    classification, avg = classify_trajectory([])
+    classification, _avg = classify_trajectory([])
     assert classification == "failed"
-    assert avg == 0.0
+    assert _avg == 0.0
 
 
 def test_analyze_with_graders():
