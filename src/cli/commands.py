@@ -160,6 +160,17 @@ def cmd_run(settings: Settings, task: str) -> None:
     except Exception as exc:
         logger.error("Reflection failed: %s", exc)
 
+    # Hint about daemon if not running
+    try:
+        from src.evolution.run_log import RunLog
+        run_log_check = RunLog(settings.evolution_state_path / "run_log.jsonl")
+        pending = run_log_check.count_unprocessed()
+        if pending >= 3:
+            print(f"\n  {pending} unprocessed runs. Start the daemon to auto-evolve:")
+            print("    python -m src evolve-daemon")
+    except Exception:
+        pass
+
 
 def cmd_evolve(settings: Settings, tasks_file: str, max_cycles: int) -> None:
     """Run the inner-loop evolution."""
