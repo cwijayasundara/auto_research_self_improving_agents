@@ -13,7 +13,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from src.agent.prompts import REFLECTION_PROMPT
-from src.memory.store import MemoryStore
+from evoagent.memory.store import FileMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +46,18 @@ def generate_reflection(
     grader_results: dict[str, Any],
 ) -> dict[str, Any]:
     """Generate a reflection on an agent run using the LLM."""
+    # Include tool call outputs for richer reflection context
+    enriched_calls = []
+    for tc in tool_calls[:50]:
+        entry = {"name": tc.get("name", ""), "args": tc.get("args", {})}
+        if "output" in tc:
+            entry["output"] = str(tc["output"])[:300]
+        enriched_calls.append(entry)
+
     prompt = REFLECTION_PROMPT.format(
         task=task,
-        output=output[:3000],
-        tool_calls=json.dumps(tool_calls[:20], indent=2),
+        output=output[:8000],
+        tool_calls=json.dumps(enriched_calls, indent=2),
         grader_results=json.dumps(grader_results, indent=2),
     )
     response = llm.invoke([HumanMessage(content=prompt)])
@@ -58,7 +66,7 @@ def generate_reflection(
 
 def reflect_and_store(
     llm: BaseChatModel,
-    memory_store: MemoryStore,
+    memory_store: FileMemoryStore,
     run_id: str,
     task: str,
     output: str,

@@ -7,7 +7,7 @@ from typing import Any
 from langsmith import Client
 
 from src.config.settings import Settings
-from src.tracing.trajectory import ToolCall, Trajectory, TrajectoryMetrics
+from evoagent.tracing.trajectory import ToolCall, TrajectoryRecord
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,8 @@ class TraceFetcher:
             "feedback": {},
         }
 
-    def parse_trajectory(self, run_data: dict[str, Any]) -> Trajectory:
-        """Parse a raw run dict into a Trajectory model."""
+    def parse_trajectory(self, run_data: dict[str, Any]) -> TrajectoryRecord:
+        """Parse a raw run dict into a TrajectoryRecord model."""
         inputs = run_data.get("inputs", {})
         outputs = run_data.get("outputs", {})
 
@@ -71,20 +71,16 @@ class TraceFetcher:
             raw_output = outputs.get("output", outputs.get("result", outputs))
             output = raw_output if isinstance(raw_output, str) else str(raw_output)
 
-        tool_calls: list[ToolCall] = []
-        metrics = TrajectoryMetrics(total_tokens=run_data.get("total_tokens", 0))
-
-        return Trajectory(
+        return TrajectoryRecord(
             run_id=run_data["run_id"],
             task=task,
             output=output,
-            tool_calls=tool_calls,
-            metrics=metrics,
+            tool_calls=[],
+            total_tokens=run_data.get("total_tokens", 0),
             status=run_data.get("status", "unknown"),
-            feedback=run_data.get("feedback", {}),
         )
 
-    def fetch_and_parse(self, limit: int = 10) -> list[Trajectory]:
+    def fetch_and_parse(self, limit: int = 10) -> list[TrajectoryRecord]:
         """Fetch recent runs and parse them into Trajectory models.
 
         Returns an empty list so the orchestrator uses its local
