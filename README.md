@@ -295,8 +295,7 @@ After reading `evolution_state/`, decide what to change:
 - `src/evolution/orchestrator.py` — the inner-loop pipeline is fixed
 - `src/evolution/graders/` — grading functions are ground truth
 - `src/evolution/analyzer.py` — analysis pipeline is fixed
-- `src/evolution/failure_skill_creator.py` — failure skill creation is fixed
-- `src/evolution/skill_extractor.py` — skill extraction is fixed
+- `evoagent/` — the library is shared infrastructure, not per-experiment
 
 ### Stopping conditions
 
@@ -335,47 +334,198 @@ claude "Read program.md and run the outer loop experiment.
 
 **Token cost**: Each outer-loop iteration runs the full inner loop (up to 5 cycles × 7 tasks = 35 agent runs + grading + reflection). With defaults (5 outer × 5 inner × 7 tasks), worst case is ~175 agent runs. Set `MAX_OUTER_LOOP_ITERATIONS` and `MAX_EVOLUTION_CYCLES` lower to reduce cost.
 
+## EvoAgent Library
+
+The generic self-improving patterns have been extracted into the **`evoagent`** library (in `evoagent/`). Team members can reuse these components to build their own self-improving agents — code review agents, security audit agents, content generators, etc.
+
+### Install tiers
+
+```bash
+pip install evoagent                  # Core: memory, skills, config, types (pydantic only)
+pip install evoagent[harness]         # + middleware (adds langchain)
+pip install evoagent[evolution]       # + full Karpathy loop (adds langgraph, langsmith)
+pip install evoagent[all]             # Everything
+```
+
+### Quick start: cherry-pick components
+
+```python
+# Just memory
+from evoagent.memory import FileMemoryStore, compress_context
+store = FileMemoryStore("./my-agent/memory")
+store.store("episodic", "run-001", {"task": "...", "score": 0.85})
+
+# Just middleware (add to any LangChain agent)
+from evoagent.harness import SelfVerificationMiddleware, LoopDetectionMiddleware
+middleware = [
+    SelfVerificationMiddleware(required_sections=["summary", "recommendation"]),
+    LoopDetectionMiddleware(max_similar=3),
+]
+
+# Just grading
+from evoagent.graders import EfficiencyGrader, MultiJudgeGrader
+grader = EfficiencyGrader()
+result = grader.grade(task="...", output="...", metrics=my_metrics)
+```
+
+### Quick start: full evolution loop
+
+```python
+from evoagent import EvoAgentConfig
+from evoagent.core.protocols import AgentFactory
+from evoagent.core.types import TaskResult, TrajectoryMetrics
+from evoagent.graders import EfficiencyGrader, MultiJudgeGrader
+from evoagent.harness import default_middleware_stack
+from evoagent.memory import FileMemoryStore
+from evoagent.skills import SkillManager
+from evoagent.evolution import analyze_trajectory, classify_trajectory, run_sleep_review
+
+# 1. Implement AgentFactory for YOUR agent
+class MyAgent(AgentFactory):
+    def create(self, system_prompt, middleware, **kwargs):
+        # Build your LangChain/LangGraph agent here
+        ...
+
+    def run(self, agent, task, timeout=300):
+        # Run the agent and return a TaskResult
+        ...
+
+# 2. Configure
+config = EvoAgentConfig(base_dir="./data", max_cycles=5)
+memory = FileMemoryStore(config.memory_path)
+skills = SkillManager(config.skills_path)
+
+# 3. Set up graders (mix built-in + custom)
+graders = [
+    MultiJudgeGrader(llm=my_llm, name="task_completion"),
+    MultiJudgeGrader(llm=my_llm, name="quality"),
+    EfficiencyGrader(),
+]
+
+# 4. Run and grade
+factory = MyAgent()
+agent = factory.create(system_prompt="...", middleware=default_middleware_stack())
+result = factory.run(agent, task="Research quantum computing")
+grades = analyze_trajectory(graders, result.task, result.output,
+                            metrics=TrajectoryMetrics(total_tokens=5000, total_steps=3))
+classification, score = classify_trajectory(grades)
+
+# 5. Sleep-time review (between sessions)
+run_sleep_review(llm=my_llm, memory=memory, traces_dir=config.traces_path)
+```
+
+### Running the research agent example
+
+This repo's `src/` is itself a reference application built on `evoagent`:
+
+```bash
+# 1. Install everything
+pip install -e .
+
+# 2. Configure
+cp .env.example .env  # add your API keys
+
+# 3. Run a single research task
+make run TASK="What are the latest advances in quantum computing?"
+
+# 4. Run the evolution loop
+make evolve CYCLES=3
+
+# 5. Run sleep-time review (cross-run trace analysis)
+.venv/bin/python -m src sleep-review
+
+# 6. Inspect what it learned
+make skills     # List learned skills
+make prompts    # Show prompt version history
+make memory     # Browse memories
+make state      # Show evolution state
+```
+
+### Running tests
+
+```bash
+# All tests (188 total)
+PYTHONPATH=. python -m pytest tests/evoagent/ tests/unit/ -v
+
+# Evoagent library only (52 tests, no API keys needed)
+PYTHONPATH=. python -m pytest tests/evoagent/ -v
+
+# Research agent tests (136 tests, mocked LLM)
+PYTHONPATH=. python -m pytest tests/unit/ -v
+
+# E2E grader test with real LLM (needs API keys in .env)
+PYTHONPATH=. python test_graders.py
+```
+
+### Library architecture
+
+```
+evoagent/                         # Reusable library
+├── core/                         # Layer 0: types, protocols, config (pydantic only)
+│   ├── types.py                  # GraderResult, TaskResult, TrajectoryMetrics
+│   ├── protocols.py              # ABCs: Grader, AgentFactory, MemoryBackend, SkillStore, PromptStore
+│   ├── config.py                 # EvoAgentConfig
+│   └── parsing.py                # LLM JSON response parsing
+├── memory/                       # Layer 1: episodic/semantic memory
+│   ├── store.py                  # FileMemoryStore
+│   └── compression.py            # Token-budgeted context assembly + dedup
+├── skills/                       # Layer 1: SKILL.md management
+│   ├── manager.py                # SkillManager
+│   └── extractor.py              # Success + failure skill extraction
+├── harness/                      # Layer 2: middleware (needs langchain)
+│   ├── middleware.py              # SelfVerification, ContextAssembly, LoopDetection, TraceCapture
+│   └── builder.py                # default_middleware_stack()
+├── graders/                      # Layer 2: evaluation (needs langchain)
+│   ├── multi_judge.py            # MultiJudgeGrader (parallel LLM judges)
+│   └── efficiency.py             # EfficiencyGrader (rule-based)
+├── evolution/                    # Layer 3: full loop (needs langgraph)
+│   ├── analyzer.py               # Run graders, classify trajectories
+│   ├── prompt_optimizer.py       # Metaprompt-based prompt rewriting
+│   ├── sleep_review.py           # Cross-run trace analysis
+│   └── state.py                  # Evolution state persistence
+└── tracing/                      # Trace capture + trajectory models
+```
+
 ## Project Structure
 
 ```
-src/
-├── agent/                    # Agent factory, prompts, sub-agents
-│   ├── deep_agent.py         # LangGraph agent with memory + skills
-│   ├── prompts.py            # All prompt templates (including failure skill prompt)
-│   ├── prompt_store.py       # Versioned prompt persistence
-│   └── subagents.py          # Research + synthesis sub-agents
-├── evolution/                # Evolution engine
-│   ├── orchestrator.py       # Two-speed evolution loop (10 nodes)
-│   ├── analyzer.py           # 3-grader trajectory analysis
-│   ├── skill_extractor.py    # Extract skills from successes
-│   ├── failure_skill_creator.py  # Create defensive skills from failures
-│   ├── prompt_optimizer.py   # Skill-aware prompt optimization + autonomy validation
-│   ├── evolution_state_bridge.py  # Bridge inner→outer loop
-│   ├── state.py              # LangGraph state schemas
-│   └── graders/              # Task completion, efficiency, quality
-├── memory/                   # Reflective memory system
-│   ├── store.py              # JSON-backed episodic + semantic
-│   ├── reflection.py         # Post-run LLM reflection
-│   └── compression.py        # Dedup + consolidation
-├── skills/                   # SKILL.md management (Anthropic format)
-│   └── manager.py            # CRUD with progressive disclosure
-├── tools/                    # Agent tools
-│   └── search.py             # Tavily (primary) + DuckDuckGo (fallback)
-├── tracing/                  # LangSmith integration
-│   ├── fetcher.py            # Trace fetching
-│   └── trajectory.py         # Pydantic trajectory models
-├── config/                   # Settings (pydantic-settings)
-└── cli/                      # CLI commands
+src/                              # Research agent application (uses evoagent)
+├── agent/                        # Agent factory, prompts, sub-agents
+│   ├── deep_agent.py             # LangGraph agent with evoagent middleware
+│   ├── prompts.py                # Research-specific prompt templates
+│   ├── prompt_store.py           # Versioned prompt persistence
+│   └── subagents.py              # Research + synthesis sub-agents
+├── evolution/                    # Research-specific evolution pipeline
+│   ├── orchestrator.py           # Two-speed evolution loop (10 LangGraph nodes)
+│   ├── analyzer.py               # 4-grader analysis using evoagent graders
+│   ├── prompt_optimizer.py       # Skill-aware prompt optimization
+│   ├── evolution_state_bridge.py # Bridge inner→outer loop
+│   ├── state.py                  # LangGraph state schemas (imports evoagent types)
+│   └── graders/                  # Research-specific graders
+│       ├── quality.py            # Output quality (uses evoagent parsing)
+│       ├── task_completion.py    # Task completion (uses evoagent parsing)
+│       ├── claim_verification.py # Claim extraction + internal consistency
+│       └── fact_checker.py       # Web-based spot-check verification
+├── memory/                       # Delegates to evoagent.memory
+│   └── reflection.py             # Post-run LLM reflection (research-specific prompts)
+├── tools/                        # Research-specific tools
+│   └── search.py                 # Tavily (primary) + DuckDuckGo (fallback)
+├── tracing/                      # Delegates to evoagent.tracing
+│   └── fetcher.py                # LangSmith trace fetching
+├── config/                       # App-level settings (pydantic-settings)
+└── cli/                          # CLI commands (run, evolve, sleep-review, etc.)
 
-evolution_state/              # Bridge to outer-loop coding agent
-├── failures.md               # Deduplicated failure patterns
-├── hypotheses.md             # What's been tried + outcomes
-├── skills_summary.md         # All skills (success + defensive)
-└── plateau_report.md         # Handoff signal to outer loop
+evoagent/                         # Reusable library (see above)
 
-program.md                    # Instructions for the outer-loop coding agent
-tasks/research_tasks.json     # Evaluation dataset (7 research tasks)
-results.tsv                   # Experiment log (autoresearch style)
+evolution_state/                  # Bridge to outer-loop coding agent
+├── failures.md                   # Deduplicated failure patterns
+├── hypotheses.md                 # What's been tried + outcomes
+├── skills_summary.md             # All skills (success + defensive)
+└── plateau_report.md             # Handoff signal to outer loop
+
+program.md                        # Instructions for the outer-loop coding agent
+tasks/research_tasks.json         # Evaluation dataset (7 research tasks)
+results.tsv                       # Experiment log (autoresearch style)
 ```
 
 ## How It Differs from Each Parent
