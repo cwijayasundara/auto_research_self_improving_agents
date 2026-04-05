@@ -7,3 +7,19 @@ except ImportError:
         "evoagent.harness requires langchain-core. "
         "Install with: pip install evoagent[harness]"
     ) from None
+
+from evoagent.harness.builder import default_middleware_stack
+from evoagent.harness.middleware import (
+    ContextAssemblyMiddleware,
+    LoopDetectionMiddleware,
+    SelfVerificationMiddleware,
+    TraceCaptureMiddleware,
+)
+
+__all__ = [
+    "ContextAssemblyMiddleware",
+    "LoopDetectionMiddleware",
+    "SelfVerificationMiddleware",
+    "TraceCaptureMiddleware",
+    "default_middleware_stack",
+]
