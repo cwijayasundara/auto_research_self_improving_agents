@@ -1,17 +1,13 @@
-"""LangGraph state schemas for the evolution pipeline."""
+"""LangGraph state schemas for the evolution pipeline.
+
+Shared types (GraderResult, etc.) now live in evoagent.core.types.
+This file only contains LangGraph-specific state TypedDicts.
+"""
 
 from typing import Any, TypedDict
 
-from src.tracing.trajectory import Trajectory
-
-
-class GraderResult(TypedDict):
-    """Result from a single grader."""
-
-    name: str
-    score: float
-    passed: bool
-    reasoning: str
+from evoagent.core.types import GraderResult
+from evoagent.tracing.trajectory import TrajectoryRecord
 
 
 class AnalysisResult(TypedDict):
@@ -29,7 +25,7 @@ class AnalysisResult(TypedDict):
 class AnalyzerState(TypedDict):
     """State for the trajectory analyzer LangGraph workflow."""
 
-    trajectory: Trajectory
+    trajectory: TrajectoryRecord
     task_completion: GraderResult
     efficiency: GraderResult
     quality: GraderResult
@@ -56,7 +52,7 @@ class OrchestratorState(TypedDict):
     tasks: list[str]
     current_cycle: int
     max_cycles: int
-    trajectories: list[Trajectory]
+    trajectories: list[TrajectoryRecord]
     analysis_results: list[AnalysisResult]
     cycle_metrics: list[EvolutionMetrics]
     prompt_version: int
