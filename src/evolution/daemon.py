@@ -26,6 +26,8 @@ from src.evolution.state import AnalysisResult
 from evoagent.core.types import GraderResult
 from evoagent.memory.compression import deduplicate_semantic
 from evoagent.memory.store import FileMemoryStore
+from src.evolution.harness_config import HarnessConfigStore
+from src.evolution.harness_optimizer import optimize_harness
 from evoagent.skills.extractor import extract_skills_from_batch
 from evoagent.skills.manager import SkillManager
 
@@ -95,6 +97,7 @@ def _run_evolution_cycle(
         "prompt_changed": False,
         "skills_extracted": 0,
         "failure_skills_created": 0,
+        "harness_changed": False,
     }
 
     # 1. Prompt optimization (if there are failures/partials)
@@ -146,6 +149,21 @@ def _run_evolution_cycle(
             logger.info("Compressed %d duplicate memories", deduped)
     except Exception as exc:
         logger.error("Memory compression failed: %s", exc)
+
+    # 5. Harness optimization
+    try:
+        harness_store = HarnessConfigStore(settings.harness_config_path)
+        old_harness_version = harness_store.get_latest_version()
+        new_harness_version = optimize_harness(llm, entries, harness_store)
+        if new_harness_version != old_harness_version:
+            logger.info(
+                "Harness config upgraded: v%d -> v%d",
+                old_harness_version,
+                new_harness_version,
+            )
+            result["harness_changed"] = True
+    except Exception as exc:
+        logger.error("Harness optimization failed: %s", exc)
 
     return result
 
@@ -203,9 +221,10 @@ def run_daemon(
 
                 logger.info(
                     "Daemon Cycle %d complete: prompt_changed=%s, "
-                    "skills=%d, failure_skills=%d",
+                    "harness_changed=%s, skills=%d, failure_skills=%d",
                     cycle_count,
                     result["prompt_changed"],
+                    result.get("harness_changed", False),
                     result["skills_extracted"],
                     result["failure_skills_created"],
                 )
