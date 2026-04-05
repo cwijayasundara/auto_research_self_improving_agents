@@ -5,36 +5,36 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from evoagent.core.parsing import parse_llm_json
 from src.evolution.graders.fact_checker import (
     _check_single_claim,
     _compute_spot_check_score,
-    _parse_json_response,
     _select_verifiable_claims,
     spot_check_claims,
 )
 
 # ---------------------------------------------------------------------------
-# _parse_json_response
+# parse_llm_json (replaces _parse_json_response)
 # ---------------------------------------------------------------------------
 
 
-class TestParseJsonResponse:
+class TestParseLlmJson:
     def test_plain_json(self):
         text = '{"selected": ["claim 1", "claim 2"]}'
-        result = _parse_json_response(text)
+        result = parse_llm_json(text)
         assert result == {"selected": ["claim 1", "claim 2"]}
 
     def test_markdown_code_block(self):
         text = '```json\n{"selected": ["claim 1"]}\n```'
-        result = _parse_json_response(text)
+        result = parse_llm_json(text)
         assert result == {"selected": ["claim 1"]}
 
     def test_invalid_json_returns_empty(self):
-        result = _parse_json_response("not json at all")
+        result = parse_llm_json("not json at all")
         assert result == {}
 
     def test_empty_string(self):
-        result = _parse_json_response("")
+        result = parse_llm_json("")
         assert result == {}
 
 

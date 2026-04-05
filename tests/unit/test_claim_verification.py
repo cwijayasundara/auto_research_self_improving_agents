@@ -5,36 +5,36 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from evoagent.core.parsing import parse_llm_json
 from src.evolution.graders.claim_verification import (
     _compute_consistency_score,
     _extract_claims,
-    _parse_json_response,
     _verify_claims,
     grade_claims,
 )
 
 # ---------------------------------------------------------------------------
-# _parse_json_response
+# parse_llm_json (replaces _parse_json_response)
 # ---------------------------------------------------------------------------
 
 
-class TestParseJsonResponse:
+class TestParseLlmJson:
     def test_plain_json(self):
         text = '{"claims": ["claim 1", "claim 2"]}'
-        result = _parse_json_response(text)
+        result = parse_llm_json(text)
         assert result == {"claims": ["claim 1", "claim 2"]}
 
     def test_markdown_code_block(self):
         text = '```json\n{"claims": ["claim 1"]}\n```'
-        result = _parse_json_response(text)
+        result = parse_llm_json(text)
         assert result == {"claims": ["claim 1"]}
 
     def test_invalid_json_returns_empty(self):
-        result = _parse_json_response("not json at all")
+        result = parse_llm_json("not json at all")
         assert result == {}
 
     def test_empty_string(self):
-        result = _parse_json_response("")
+        result = parse_llm_json("")
         assert result == {}
 
 
@@ -146,16 +146,16 @@ class TestGradeClaims:
             ),
         ]
         result = grade_claims(llm, "task", "output text")
-        assert result["name"] == "claim_verification"
-        assert result["score"] == 1.0
-        assert result["passed"] is True
+        assert result.name == "claim_verification"
+        assert result.score == 1.0
+        assert result.passed is True
 
     def test_no_claims_extracted(self):
         llm = MagicMock()
         llm.invoke.return_value = MagicMock(content="bad response")
         result = grade_claims(llm, "task", "output")
-        assert result["score"] == 0.5
-        assert result["passed"] is False
+        assert result.score == 0.5
+        assert result.passed is False
 
     def test_no_verdicts_returned(self):
         llm = MagicMock()
@@ -164,8 +164,8 @@ class TestGradeClaims:
             MagicMock(content="bad response"),
         ]
         result = grade_claims(llm, "task", "output")
-        assert result["score"] == 0.5
-        assert result["passed"] is False
+        assert result.score == 0.5
+        assert result.passed is False
 
     def test_spot_check_blending(self):
         llm = MagicMock()
@@ -184,8 +184,8 @@ class TestGradeClaims:
             ),
         ]
         result = grade_claims(llm, "task", "output", spot_check_score=0.5)
-        assert result["score"] == pytest.approx(0.8)
-        assert result["passed"] is True
+        assert result.score == pytest.approx(0.8)
+        assert result.passed is True
 
     def test_low_score_fails(self):
         llm = MagicMock()
@@ -204,5 +204,5 @@ class TestGradeClaims:
             ),
         ]
         result = grade_claims(llm, "task", "output")
-        assert result["score"] == pytest.approx(0.0)
-        assert result["passed"] is False
+        assert result.score == pytest.approx(0.0)
+        assert result.passed is False
