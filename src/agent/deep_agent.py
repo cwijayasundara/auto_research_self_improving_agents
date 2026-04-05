@@ -14,6 +14,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from evoagent.harness.builder import default_middleware_stack
+from src.evolution.harness_config import HarnessConfigStore
 from src.agent.prompt_store import PromptStore
 from src.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from src.config.settings import Settings
@@ -156,11 +157,15 @@ def create_agent(
     )
 
     # Build harness middleware stack (zero extra LLM calls)
+    harness_store = HarnessConfigStore(settings.harness_config_path)
+    harness_cfg = harness_store.load_best()
+
     harness_middleware = default_middleware_stack(
         task=task,
         skills_dir=settings.skills_path,
         traces_dir=settings.traces_path,
-        budget_seconds=300,
+        harness_config=harness_cfg,
+        llm=llm,
     )
 
     kwargs: dict[str, Any] = {

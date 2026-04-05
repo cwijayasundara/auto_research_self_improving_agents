@@ -112,3 +112,17 @@ class TestHarnessConfigStore:
             assert store.get_latest_version() == 1
             store.save(HarnessConfig())
             assert store.get_latest_version() == 2
+
+
+class TestHarnessConfigWiring:
+    def test_build_middleware_from_config(self):
+        from evoagent.harness.builder import default_middleware_stack
+
+        cfg = HarnessConfig(budget_seconds=120, max_similar=7, max_retries=5, detect_env=True)
+        stack = default_middleware_stack(harness_config=cfg)
+        names = [type(m).__name__ for m in stack]
+        assert "TimeBudgetMiddleware" in names
+        assert "LoopDetectionMiddleware" in names
+        assert "SelfVerificationMiddleware" in names
+        assert "ContextAssemblyMiddleware" in names
+        assert len(stack) == 6

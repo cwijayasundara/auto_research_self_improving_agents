@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     prompts_dir: str = "prompts"
     memory_dir: str = "memory"
     evolution_state_dir: str = "evolution_state"
+    harness_config_dir: str = "harness_config"
 
     # Traces directory
     traces_dir: str = "traces"
@@ -91,6 +92,10 @@ class Settings(BaseSettings):
     @property
     def evolution_state_path(self) -> Path:
         return PROJECT_ROOT / self.evolution_state_dir
+
+    @property
+    def harness_config_path(self) -> Path:
+        return PROJECT_ROOT / self.harness_config_dir
 
     @property
     def traces_path(self) -> Path:
