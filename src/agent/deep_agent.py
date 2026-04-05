@@ -13,12 +13,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
-from evoagent.harness.middleware import (
-    ContextAssemblyMiddleware,
-    LoopDetectionMiddleware,
-    SelfVerificationMiddleware,
-    TraceCaptureMiddleware,
-)
+from evoagent.harness.builder import default_middleware_stack
 from src.agent.prompt_store import PromptStore
 from src.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from src.config.settings import Settings
@@ -161,12 +156,12 @@ def create_agent(
     )
 
     # Build harness middleware stack (zero extra LLM calls)
-    harness_middleware = [
-        SelfVerificationMiddleware(),
-        ContextAssemblyMiddleware(skills_dir=settings.skills_path),
-        LoopDetectionMiddleware(),
-        TraceCaptureMiddleware(task=task, traces_dir=settings.traces_path),
-    ]
+    harness_middleware = default_middleware_stack(
+        task=task,
+        skills_dir=settings.skills_path,
+        traces_dir=settings.traces_path,
+        budget_seconds=300,
+    )
 
     kwargs: dict[str, Any] = {
         "model": llm,
