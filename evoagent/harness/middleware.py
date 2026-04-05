@@ -4,6 +4,7 @@
 2. ContextAssemblyMiddleware — enriches first model call
 3. LoopDetectionMiddleware — detects repetitive searches
 4. TraceCaptureMiddleware — records traces for offline analysis
+5. TimeBudgetMiddleware — injects time pressure warnings into tool responses
 """
 
 from __future__ import annotations
@@ -315,3 +316,79 @@ class TraceCaptureMiddleware(AgentMiddleware):
         except Exception as exc:
             logger.warning("Failed to save trace: %s", exc)
             return None
+
+
+# --- Time Budget ---
+
+class TimeBudgetMiddleware(AgentMiddleware):
+    """Injects time-pressure warnings into tool responses as the budget is consumed."""
+
+    tools: tuple[BaseTool, ...] = ()
+
+    _WARN_MESSAGES: dict[str, str] = {
+        "urgent": "URGENT: stop all searches, write report NOW",
+        "normal": "Start synthesizing",
+    }
+
+    def __init__(
+        self,
+        budget_seconds: int = 300,
+        warn_at: list[float] | None = None,
+    ) -> None:
+        self._budget = budget_seconds
+        self._warn_at: list[float] = warn_at if warn_at is not None else [0.6, 0.85]
+        self._start_time: float = 0.0
+        self._warnings_fired: set[float] = set()
+
+    def start(self) -> None:
+        """Record the start time."""
+        self._start_time = time.monotonic()
+
+    def before_agent(self, state: Any, runtime: Any) -> None:
+        """Auto-start timer if not already started."""
+        if self._start_time == 0.0:
+            self.start()
+        return None
+
+    def elapsed_fraction(self) -> float:
+        """Return fraction of budget consumed. Returns 0.0 if not started."""
+        if self._start_time == 0.0:
+            return 0.0
+        return (time.monotonic() - self._start_time) / self._budget
+
+    def get_warning(self) -> str | None:
+        """Check thresholds and return a warning string if one should fire.
+
+        Thresholds are checked in descending order so the most urgent message
+        wins when multiple thresholds are crossed simultaneously.
+        """
+        fraction = self.elapsed_fraction()
+        for threshold in sorted(self._warn_at, reverse=True):
+            if fraction >= threshold and threshold not in self._warnings_fired:
+                self._warnings_fired.add(threshold)
+                if threshold >= 0.85:
+                    return self._WARN_MESSAGES["urgent"]
+                return self._WARN_MESSAGES["normal"]
+        return None
+
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+        """Call handler then append a time-pressure warning if one is due."""
+        result = handler(request)
+        warning = self.get_warning()
+        if warning is None:
+            return result
+
+        # Only append when the result carries string content.
+        content = getattr(result, "content", None)
+        if not isinstance(content, str):
+            return result
+
+        from langchain_core.messages import ToolMessage  # noqa: PLC0415
+
+        tool_call_id = getattr(result, "tool_call_id", "") or ""
+        warning_msg = ToolMessage(content=warning, tool_call_id=tool_call_id)
+        # Return the original result; attach warning as a sibling attribute so
+        # callers that inspect the object can find it without breaking the
+        # standard ToolMessage interface.
+        result.__dict__.setdefault("_time_budget_warning", warning_msg)
+        return result
