@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from evoagent.core.protocols import PromptStore
+from evoagent.evolution.error_analyzer import analyze_failures_deep, format_error_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ DEFAULT_METAPROMPT = (
     "## Current Score\n{current_score}\n\n"
     "## Failure Analysis\n{failure_analysis}\n\n"
     "## Common Issues\n{common_issues}\n\n"
+    "## Deep Error Analysis\n{error_analysis}\n\n"
     "Generate an improved system prompt that addresses the failures "
     "while preserving what works. Output ONLY the new prompt text."
 )
@@ -43,6 +46,7 @@ def optimize_prompt(
     prompt_store: PromptStore,
     analyses: list[dict[str, Any]],
     metaprompt_template: str | None = None,
+    traces_dir: Path | None = None,
 ) -> int:
     """Generate an improved prompt. Returns new version number."""
     version, current_prompt = prompt_store.get_current()
@@ -61,11 +65,19 @@ def optimize_prompt(
     scores = [a.get("average_score", 0) for a in analyses]
     avg_score = sum(scores) / len(scores) if scores else 0
 
+    try:
+        deep_analyses = analyze_failures_deep(llm, failed, traces_dir=traces_dir)
+        error_analysis = format_error_analysis(deep_analyses)
+    except Exception:  # noqa: BLE001
+        logger.warning("Deep error analysis failed; using fallback.")
+        error_analysis = "No deep error analysis available."
+
     metaprompt = template.format(
         current_prompt=current_prompt[:3000],
         current_score=f"{avg_score:.3f}",
         failure_analysis=f"{len(failed)} failed/partial out of {len(analyses)}",
         common_issues="\n".join(f"- {i}" for i in issues[:10]),
+        error_analysis=error_analysis,
     )
 
     for attempt in range(1 + MAX_AUTONOMY_RETRIES):

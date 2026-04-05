@@ -9,6 +9,13 @@ except ImportError:
     ) from None
 
 from evoagent.evolution.analyzer import analyze_trajectory, classify_trajectory
+from evoagent.evolution.error_analyzer import analyze_failures_deep, format_error_analysis
 from evoagent.evolution.sleep_review import run_sleep_review
 
-__all__ = ["analyze_trajectory", "classify_trajectory", "run_sleep_review"]
+__all__ = [
+    "analyze_trajectory",
+    "classify_trajectory",
+    "analyze_failures_deep",
+    "format_error_analysis",
+    "run_sleep_review",
+]
