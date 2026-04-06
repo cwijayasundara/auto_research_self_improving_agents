@@ -59,13 +59,16 @@ pip install -e .
 cp .env.example .env
 # Edit .env with your API keys (at minimum: OPENAI_API_KEY)
 
-# 5. Run a single research task (grades, scores prompt, stores memory)
+# 5. Start the background evolution daemon (in a separate terminal)
+python -m src evolve-daemon
+
+# 6. Run research tasks — the agent self-improves from every interaction
 python -m src run "What are the latest advances in quantum computing?"
+python -m src run "Compare solid-state vs lithium-sulfur batteries"
+python -m src run "What is the current state of fusion energy?"
+# After 3+ runs, the daemon auto-evolves prompts, harness, and skills
 
-# 6. Start the background evolution daemon (in a separate terminal)
-python -m src evolve-daemon --interval 60 --min-runs 3
-
-# 7. Or run the batch evolution loop (3 cycles with task sampling + holdout)
+# 7. (Optional) Bootstrap with synthetic tasks if starting fresh
 python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 3
 
 # 8. Run sleep-time review (cross-run trace analysis)
@@ -84,9 +87,9 @@ Every `python -m src run "..."` automatically:
 4. **Reflects** — LLM introspection stores episodic + semantic memories
 5. **Appends** structured results to `evolution_state/run_log.jsonl`
 
-### Background evolution daemon
+### Background evolution daemon (primary)
 
-The daemon (`python -m src evolve-daemon`) runs alongside the serving agent:
+The daemon (`python -m src evolve-daemon`) is the primary evolution mechanism. It runs alongside the serving agent and continuously improves from real user interactions:
 
 ```
 ┌─────────────┐     append      ┌──────────────┐
@@ -99,26 +102,32 @@ The daemon (`python -m src evolve-daemon`) runs alongside the serving agent:
                                 │  (Terminal 2) │  have accumulated
                                 └──────┬───────┘
                                        │ writes
-                         ┌─────────────┼─────────────┐
-                         ▼             ▼             ▼
-                    prompts/v*    skills/SKILL.md   memory/
-                         │
-                         ▼
-                 Next user run picks up
-                 the improved prompt
+                      ┌────────────┬───┴───┬─────────────┐
+                      ▼            ▼       ▼             ▼
+                 prompts/v*   harness/v*  skills/    memory/
+                      │            │
+                      ▼            ▼
+              Next run picks up improved
+              prompt AND evolved harness
 ```
 
-The daemon never re-runs tasks — it works entirely on grading results from real user interactions, making it lightweight and responsive to actual usage patterns.
+Each daemon cycle optimizes 5 things:
+1. **System prompt** — failure-aware, dimension-aware rewriting with pairwise validation
+2. **Harness parameters** — middleware thresholds, retry counts, time budgets, reasoning effort (from raw execution traces)
+3. **Success skills** — reusable patterns extracted from high-scoring runs
+4. **Failure skills** — defensive "antibody" skills from low-scoring runs
+5. **Memory compression** — deduplicates semantic memories
 
-### Batch evolution loop
+The daemon never re-runs tasks — it works entirely on grading results from real user interactions, making it more effective than synthetic benchmarks.
 
-The batch `evolve` command runs a full optimization loop with:
+### Batch evolution (bootstrapping only)
 
-- **Task sampling** — samples `batch_size` (default 3) tasks per cycle from the training pool, rotating across cycles
-- **Holdout evaluation** — reserves ~30% of tasks as a holdout set to measure generalization (scores logged independently, not fed back into the optimizer)
-- **Critical grader gate** — if `task_completion` fails, the trajectory is capped at "partial" regardless of average score, ensuring the optimizer always receives signal from the most important dimension
-- **Per-dimension diagnostics** — the prompt optimizer sees which specific grading dimensions are bottlenecks (not just an opaque average)
-- **Autonomy-safe retries** — when the optimizer generates prompts with forbidden patterns, retries include specific violation feedback; as a last resort, offending lines are stripped automatically
+The `evolve` command is useful for **initial setup** when you have no run history yet. Once the daemon is running and processing real user interactions, `evolve` is unnecessary.
+
+```bash
+# Only needed once, for bootstrapping
+python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 3
+```
 
 ## Running Tests
 
@@ -273,50 +282,26 @@ evoagent/                         # Reusable library
 
 The `src/` directory is a **reference application** built on `evoagent`. It demonstrates the full two-speed evolution pattern applied to research task automation.
 
-### Self-improvement from every run
+### Continuous self-improvement (no explicit evolve needed)
 
-Every single `python -m src run "..."` grades, scores, reflects, and logs results. The background evolution daemon picks up accumulated results and triggers prompt optimization, skill extraction, and failure skill creation without any manual intervention.
+Every `python -m src run "..."` grades, scores prompt + harness, reflects into memory, and logs results. The background daemon picks up accumulated results and evolves the system continuously:
 
-### Failure-driven skill creation
+- **Prompt optimization** — failure-aware, dimension-aware rewriting with pairwise validation
+- **Harness evolution** — middleware parameters (retry counts, time budgets, loop thresholds, reasoning effort) tuned from raw execution traces
+- **Skill extraction** — reusable patterns from successes, defensive "antibody" skills from failures
+- **Memory compression** — semantic deduplication keeps context lean
 
-Instead of only learning from successes, the system creates **defensive "antibody" skills** from failures. When the agent fails at a task, the skill extractor:
+No explicit `evolve` call needed — just run tasks and let the daemon learn.
 
-1. Groups failures by pattern (which grader failed)
-2. Analyzes the failure trajectories
-3. Creates SKILL.md files with prevention strategies
-4. These skills are automatically injected into future agent runs
+### Bootstrapping with batch evolution (optional)
 
-### Running the inner loop
+For initial setup when you have no run history, you can bootstrap with synthetic tasks:
 
 ```bash
-# Run 3 evolution cycles with task sampling + holdout
 python -m src evolve --tasks-file tasks/research_tasks.json --max-cycles 3
 ```
 
-Each cycle runs an **11-node LangGraph pipeline**:
-
-```
-1. run_batch            — Sample batch_size tasks from training pool (rotated per cycle)
-2. fetch_traces         — Optionally enrich from LangSmith
-3. analyze              — Grade each trajectory: task_completion, efficiency, quality, claims
-4. reflect              — LLM generates introspection → stores episodic + semantic memories
-5. compress_memories    — Deduplicate semantic memories
-6. extract_skills       — From successful runs (score >= 0.70) → creates SKILL.md files
-7. create_failure_skills — From failure patterns (2+ failures) → defensive SKILL.md files
-8. optimize_prompt      — Failure-aware + skill-aware + dimension-aware prompt rewriting
-9. holdout_check        — Run holdout tasks to measure generalization (scores not fed back)
-10. persist_state       — Write evolution_state/ files for the outer loop
-11. aggregate_metrics   — Compute cycle summary, check for plateau
-```
-
-### Running the background daemon
-
-```bash
-# Start the daemon (run in a separate terminal)
-python -m src evolve-daemon --interval 60 --min-runs 3
-```
-
-The daemon polls `run_log.jsonl` every 60 seconds. When 3+ unprocessed runs accumulate, it triggers lightweight evolution: prompt optimization, skill extraction, failure skill creation, and memory compression — all without re-running tasks.
+Once the daemon is running and processing real interactions, this is unnecessary.
 
 ### Viewing artifacts
 
@@ -324,7 +309,7 @@ The daemon polls `run_log.jsonl` every 60 seconds. When 3+ unprocessed runs accu
 python -m src skills        # List learned skills
 python -m src prompts       # Show prompt version history (with scores from single runs)
 python -m src memory        # Browse episodic and semantic memories
-python -m src state         # Show evolution state
+python -m src state         # Show evolution state and daemon activity
 python -m src sleep-review  # Run cross-run trace analysis
 ```
 
@@ -332,13 +317,14 @@ python -m src sleep-review  # Run cross-run trace analysis
 | ------------------ | ----------------------------------------------------------------------- |
 | `skills/`          | SKILL.md files — success patterns + defensive "antibody" skills         |
 | `prompts/`         | Versioned prompt JSON files with incremental scores and feedback        |
+| `harness_config/`  | Versioned harness config JSON files with middleware parameter scores    |
 | `memory/episodic/` | One JSON per agent run (task, strategy, score, what worked)             |
 | `memory/semantic/` | Extracted facts and patterns (reusable across tasks)                    |
-| `evolution_state/` | Inner→outer loop bridge files + `run_log.jsonl` for daemon             |
+| `evolution_state/` | Daemon run log (`run_log.jsonl`) + outer loop bridge files             |
 
-### Running the outer loop
+### Outer loop (structural changes)
 
-The outer loop is a **greedy hill-climbing experiment loop** (inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch)) driven by a coding agent (Claude Code, Cursor, Codex). It makes structural code changes that the inner loop cannot.
+The outer loop is for changes the daemon **cannot** make: adding new tools, swapping models, refactoring the grading pipeline, modifying agent architecture. It's driven by a coding agent (Claude Code, Cursor, Codex) that reads `evolution_state/` when the system plateaus.
 
 See `program.md` for the full coding-agent instructions.
 

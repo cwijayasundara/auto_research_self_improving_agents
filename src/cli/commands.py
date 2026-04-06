@@ -314,10 +314,10 @@ def cmd_sleep_review(settings: Settings) -> None:
 
 
 def cmd_state(settings: Settings) -> None:
-    """Show current evolution state (for outer-loop debugging)."""
+    """Show current evolution state and daemon activity."""
     state_dir = settings.evolution_state_path
     if not state_dir.exists():
-        print("No evolution state found. Run 'evolve' first.")
+        print("No evolution state found. Run some tasks first, then start the daemon.")
         return
 
     print("Evolution State")
@@ -339,43 +339,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="auto-research-self-improving",
         description=(
-            "Self-improving research agent with two-speed evolution: "
-            "inner loop (prompt/skill/memory) + outer loop (code changes)"
+            "Self-improving research agent. Every run grades, scores, and learns. "
+            "The background daemon continuously evolves prompts, harness, and skills "
+            "from real user interactions — no explicit 'evolve' call needed."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # run
-    run_parser = subparsers.add_parser("run", help="Run agent on a single task")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run agent on a task (grades, scores prompt+harness, reflects, logs for daemon)",
+    )
     run_parser.add_argument("task", help="Task description")
 
-    # evolve
-    evolve_parser = subparsers.add_parser("evolve", help="Run inner-loop evolution")
-    evolve_parser.add_argument("--tasks-file", required=True, help="Path to tasks JSON file")
-    evolve_parser.add_argument("--max-cycles", type=int, default=3, help="Maximum evolution cycles")
-
-    # prompts
-    subparsers.add_parser("prompts", help="Show prompt version history")
-
-    # skills
-    subparsers.add_parser("skills", help="List all learned skills")
-
-    # memory
-    subparsers.add_parser("memory", help="Browse stored memories")
-
-    # state
-    subparsers.add_parser("state", help="Show evolution state for outer loop")
-
-    # sleep-review
-    subparsers.add_parser(
-        "sleep-review",
-        help="Run offline cross-run trace analysis (sleep-time compute)",
-    )
-
-    # evolve-daemon
+    # evolve-daemon (primary evolution path)
     daemon_parser = subparsers.add_parser(
         "evolve-daemon",
-        help="Background evolution daemon — watches run log and self-improves",
+        help="[PRIMARY] Background daemon — continuously evolves prompt, harness, and skills",
     )
     daemon_parser.add_argument(
         "--interval",
@@ -388,6 +369,32 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3,
         help="Minimum unprocessed runs before triggering evolution (default: 3)",
+    )
+
+    # evolve (bootstrapping only)
+    evolve_parser = subparsers.add_parser(
+        "evolve",
+        help="[BOOTSTRAP] Batch evolution on synthetic tasks — use for initial setup only",
+    )
+    evolve_parser.add_argument("--tasks-file", required=True, help="Path to tasks JSON file")
+    evolve_parser.add_argument("--max-cycles", type=int, default=3, help="Maximum evolution cycles")
+
+    # prompts
+    subparsers.add_parser("prompts", help="Show prompt version history with scores")
+
+    # skills
+    subparsers.add_parser("skills", help="List all learned skills")
+
+    # memory
+    subparsers.add_parser("memory", help="Browse stored memories")
+
+    # state
+    subparsers.add_parser("state", help="Show evolution state and daemon activity")
+
+    # sleep-review
+    subparsers.add_parser(
+        "sleep-review",
+        help="Run offline cross-run trace analysis (sleep-time compute)",
     )
 
     return parser
