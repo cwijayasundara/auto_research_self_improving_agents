@@ -121,6 +121,73 @@ class TestProposeHarnessChanges:
         assert new_config.planning_effort in {"low", "medium", "high"}
 
 
+class TestMultiCandidate:
+    def test_propose_picks_most_conservative(self):
+        """With 2 candidates, picks the one with fewer changes."""
+        llm = MagicMock()
+        # First call: changes 3 params, second call: changes 1 param
+        llm.invoke.side_effect = [
+            MagicMock(
+                content=json.dumps(
+                    {
+                        "changes": {
+                            "max_retries": 5,
+                            "budget_seconds": 120,
+                            "max_similar": 8,
+                        },
+                        "reasoning": "aggressive",
+                    }
+                )
+            ),
+            MagicMock(
+                content=json.dumps(
+                    {
+                        "changes": {"max_retries": 3},
+                        "reasoning": "conservative",
+                    }
+                )
+            ),
+        ]
+        cfg = HarnessConfig()
+        new_cfg, reasoning = propose_harness_changes(
+            llm, "diagnosis", cfg, n_candidates=2
+        )
+        # Should pick the conservative one (1 change vs 3)
+        assert new_cfg.max_retries == 3
+        assert new_cfg.budget_seconds == 300  # unchanged (default)
+        assert reasoning == "conservative"
+
+    def test_propose_single_candidate_backward_compat(self):
+        """n_candidates=1 still works (backward compatibility)."""
+        llm = MagicMock()
+        llm.invoke.return_value = MagicMock(
+            content=json.dumps(
+                {
+                    "changes": {"max_retries": 5},
+                    "reasoning": "more retries",
+                }
+            )
+        )
+        cfg = HarnessConfig()
+        new_cfg, reasoning = propose_harness_changes(
+            llm, "diagnosis", cfg, n_candidates=1
+        )
+        assert new_cfg.max_retries == 5
+        assert llm.invoke.call_count == 1
+
+    def test_propose_falls_back_on_all_failures(self):
+        """If all candidates fail to parse, returns current config."""
+        llm = MagicMock()
+        llm.invoke.side_effect = Exception("LLM error")
+        cfg = HarnessConfig()
+        new_cfg, reasoning = propose_harness_changes(
+            llm, "diagnosis", cfg, n_candidates=2
+        )
+        # Should return current config unchanged
+        assert new_cfg.max_retries == cfg.max_retries
+        assert new_cfg.budget_seconds == cfg.budget_seconds
+
+
 class TestOptimizeHarness:
     def test_saves_new_version_when_changed(self):
         with tempfile.TemporaryDirectory() as tmpdir:

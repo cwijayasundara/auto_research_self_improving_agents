@@ -127,34 +127,31 @@ def build_harness_diagnosis(
     return "\n".join(lines)
 
 
-def propose_harness_changes(
+def _parse_single_proposal(
     llm: Callable[..., str],
-    diagnosis: str,
-    current_config: HarnessConfig,
-    trace_data: str = "",
-) -> tuple[HarnessConfig, str]:
-    """Use LLM to propose parameter changes based on diagnosis.
+    config_dict: dict[str, Any],
+    prompt: str,
+) -> tuple[HarnessConfig, str, int] | None:
+    """Parse a single LLM proposal into a config, reasoning, and change count.
 
-    Returns (new_config, reasoning_string).
+    Returns None if parsing fails entirely.
     """
-    config_dict = current_config.to_dict()
-    prompt = HARNESS_OPTIMIZER_PROMPT.format(
-        current_config=json.dumps(config_dict, indent=2),
-        diagnosis=diagnosis,
-        trace_data=trace_data or "(no trace data available)",
-    )
-
     from langchain_core.messages import HumanMessage
 
-    response = llm.invoke([HumanMessage(content=prompt)])
-    raw_response = response.content
-    parsed = parse_llm_json(raw_response)
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        raw_response = response.content
+        parsed = parse_llm_json(raw_response)
+    except Exception as exc:
+        logger.warning("Failed to parse harness proposal: %s", exc)
+        return None
 
     changes = parsed.get("changes", {})
     reasoning = parsed.get("reasoning", "No reasoning provided.")
 
     # Apply changes to a copy of the current config
     new_dict = dict(config_dict)
+    applied_changes = 0
     for key, value in changes.items():
         if key not in config_dict:
             logger.warning("Ignoring unknown parameter: %s", key)
@@ -181,10 +178,54 @@ def propose_harness_changes(
             lo, hi = _PARAM_BOUNDS[key]
             value = max(lo, min(hi, int(value)))
 
+        if new_dict[key] != value:
+            applied_changes += 1
         new_dict[key] = value
 
     new_config = HarnessConfig.from_dict(new_dict)
-    return new_config, reasoning
+    return new_config, reasoning, applied_changes
+
+
+def propose_harness_changes(
+    llm: Callable[..., str],
+    diagnosis: str,
+    current_config: HarnessConfig,
+    trace_data: str = "",
+    n_candidates: int = 2,
+) -> tuple[HarnessConfig, str]:
+    """Use LLM to propose parameter changes based on diagnosis.
+
+    Generates n_candidates proposals and picks the most conservative one
+    (fewest parameter changes from current config) to prevent over-tuning.
+
+    Returns (new_config, reasoning_string).
+    """
+    config_dict = current_config.to_dict()
+    prompt = HARNESS_OPTIMIZER_PROMPT.format(
+        current_config=json.dumps(config_dict, indent=2),
+        diagnosis=diagnosis,
+        trace_data=trace_data or "(no trace data available)",
+    )
+
+    # Generate multiple candidates and pick the most conservative
+    candidates: list[tuple[HarnessConfig, str, int]] = []
+    for i in range(n_candidates):
+        result = _parse_single_proposal(llm, config_dict, prompt)
+        if result is not None:
+            candidates.append(result)
+
+    if not candidates:
+        logger.warning("All harness proposals failed, returning current config")
+        return current_config, "No valid proposals generated."
+
+    # Pick the most conservative candidate (fewest changes from current)
+    best = min(candidates, key=lambda c: c[2])
+    logger.info(
+        "Picked most conservative harness proposal (%d changes) from %d candidates",
+        best[2],
+        len(candidates),
+    )
+    return best[0], best[1]
 
 
 def _load_trace(trace_path: str) -> str:

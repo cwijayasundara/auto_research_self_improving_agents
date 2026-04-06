@@ -207,34 +207,17 @@ def analyze_failures(
 MAX_AUTONOMY_RETRIES = 2
 
 
-def generate_improved_prompt(
+def _generate_single_candidate(
     llm: BaseChatModel,
+    base_meta: str,
     current_prompt: str,
-    current_score: float,
-    failure_info: dict[str, Any],
-    skills_summary: str = "",
-) -> str:
-    """Generate an improved prompt using the metaprompt approach.
+) -> str | None:
+    """Generate a single candidate prompt with autonomy validation retries.
 
-    Enhanced: includes a summary of available skills so the prompt
-    can reference them for better integration.
-
-    Includes autonomy validation — if the generated prompt contains patterns
-    that would cause the agent to ask the user for input, it retries with
-    explicit feedback about the violation, up to MAX_AUTONOMY_RETRIES times,
-    then falls back to the current prompt.
+    Returns the valid prompt string, or None if all retries fail.
     """
-    base_meta = METAPROMPT_TEMPLATE.format(
-        current_prompt=current_prompt,
-        current_score=f"{current_score:.3f}",
-        failure_analysis=failure_info["failure_analysis"],
-        common_issues="\n".join(f"- {i}" for i in failure_info["common_issues"]),
-        available_skills=skills_summary or "No skills learned yet.",
-        trace_digest=failure_info.get("trace_digest", "No trace data available."),
-        dimension_breakdown=failure_info.get("dimension_breakdown", ""),
-    )
-
     meta = base_meta
+    improved = ""
     for attempt in range(1 + MAX_AUTONOMY_RETRIES):
         response = llm.invoke([HumanMessage(content=meta)])
         improved = response.content.strip()
@@ -267,7 +250,7 @@ def generate_improved_prompt(
             f"Generate the prompt again WITHOUT any of these patterns."
         )
 
-    # All retries failed — strip violations from the last attempt
+    # All retries failed — try stripping violations as last resort
     cleaned = _strip_autonomy_violations(improved)
     remaining = validate_prompt_autonomy(cleaned)
     if not remaining:
@@ -277,13 +260,64 @@ def generate_improved_prompt(
         )
         return cleaned
 
-    # Truly stuck — keep the current prompt to avoid drift
-    logger.error(
-        "Prompt optimizer failed autonomy validation after %d attempts. "
-        "Keeping current prompt to prevent drift.",
-        1 + MAX_AUTONOMY_RETRIES,
+    return None
+
+
+def generate_improved_prompt(
+    llm: BaseChatModel,
+    current_prompt: str,
+    current_score: float,
+    failure_info: dict[str, Any],
+    skills_summary: str = "",
+    n_candidates: int = 2,
+) -> str:
+    """Generate an improved prompt using the metaprompt approach.
+
+    Generates n_candidates prompts (each with autonomy validation retries)
+    and picks the one whose length is closest to the current prompt to
+    prevent prompt bloat or excessive drift. This selection is zero-cost
+    (no extra LLM calls).
+
+    Enhanced: includes a summary of available skills so the prompt
+    can reference them for better integration.
+    """
+    base_meta = METAPROMPT_TEMPLATE.format(
+        current_prompt=current_prompt,
+        current_score=f"{current_score:.3f}",
+        failure_analysis=failure_info["failure_analysis"],
+        common_issues="\n".join(f"- {i}" for i in failure_info["common_issues"]),
+        available_skills=skills_summary or "No skills learned yet.",
+        trace_digest=failure_info.get("trace_digest", "No trace data available."),
+        dimension_breakdown=failure_info.get("dimension_breakdown", ""),
     )
-    return current_prompt
+
+    # Generate multiple candidates
+    candidates: list[str] = []
+    for i in range(n_candidates):
+        candidate = _generate_single_candidate(llm, base_meta, current_prompt)
+        if candidate is not None:
+            candidates.append(candidate)
+
+    if not candidates:
+        logger.error(
+            "All %d prompt candidates failed autonomy validation. "
+            "Keeping current prompt to prevent drift.",
+            n_candidates,
+        )
+        return current_prompt
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Pick the candidate with least length drift from current prompt
+    current_len = len(current_prompt)
+    best = min(candidates, key=lambda c: abs(len(c) - current_len))
+    logger.info(
+        "Picked prompt candidate with least drift (%+d chars) from %d candidates",
+        len(best) - current_len,
+        len(candidates),
+    )
+    return best
 
 
 def _strip_autonomy_violations(prompt: str) -> str:
