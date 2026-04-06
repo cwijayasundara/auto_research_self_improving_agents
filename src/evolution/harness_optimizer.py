@@ -30,6 +30,9 @@ _PARAM_BOUNDS: dict[str, tuple[int, int]] = {
     "max_repeated_tools": (1, 15),
     "budget_seconds": (60, 600),
     "planning_calls": (1, 5),
+    "search_max_retries": (0, 5),
+    "search_retry_delay": (0, 10),
+    "search_max_results": (1, 10),
 }
 
 _VALID_EFFORTS = {"low", "medium", "high"}
@@ -62,10 +65,13 @@ Respond with JSON only:
 Only include parameters you want to change. Valid parameters and their types:
 - max_retries (int), min_length (int), verify_against_task (bool)
 - required_sections (list[str])
+- completion_checks (list[str]): custom quality checks evaluated by LLM
 - max_similar (int), max_total (int), max_file_edits (int), max_repeated_tools (int)
 - budget_seconds (int), warn_at (list[float])
 - planning_effort / implementation_effort / verification_effort: "low" | "medium" | "high"
 - planning_calls (int), detect_env (bool)
+- search_max_retries (int), search_retry_delay (int), search_max_results (int)
+- search_depth: "basic" | "advanced"
 """
 
 
@@ -159,6 +165,14 @@ def propose_harness_changes(
             if value not in _VALID_EFFORTS:
                 logger.warning(
                     "Ignoring invalid effort value %r for %s", value, key
+                )
+                continue
+
+        # Validate search_depth
+        if key == "search_depth":
+            if value not in ("basic", "advanced"):
+                logger.warning(
+                    "Ignoring invalid search_depth value %r", value
                 )
                 continue
 

@@ -73,6 +73,34 @@ TASK_VERIFICATION_PROMPT = (
 )
 
 
+COMPLETION_CHECK_PROMPT = (
+    "Evaluate if this output passes these quality checks.\n\n"
+    "Task: {task}\n\n"
+    "Output (preview):\n{output}\n\n"
+    "Checks:\n{checks}\n\n"
+    'Reply as JSON: {{"passed": true}} or {{"passed": false, "failures": ["list of failed checks"]}}'
+)
+
+
+def _evaluate_completion_checks(llm: Any, task: str, output: str, checks: list[str]) -> list[str]:
+    """Evaluate custom completion checks via LLM. Returns list of failures."""
+    from evoagent.core.parsing import parse_llm_json
+    checks_text = "\n".join(f"- {c}" for c in checks)
+    prompt = COMPLETION_CHECK_PROMPT.format(
+        task=task[:500],
+        output=output[:2000],
+        checks=checks_text,
+    )
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        parsed = parse_llm_json(response.content)
+        if parsed and not parsed.get("passed", True):
+            return parsed.get("failures", ["Custom check failed"])
+    except Exception:
+        pass
+    return []
+
+
 def verify_output_against_task(llm: Any, task: str, output: str) -> list[str] | None:
     """Verify output addresses the task via lightweight LLM call.
     Returns list of missing aspects, or None if addressed (or on error — fail-open).
@@ -103,6 +131,7 @@ class SelfVerificationMiddleware(AgentMiddleware):
         max_retries: int = 2,
         verify_against_task: bool = False,
         llm: Any = None,
+        completion_checks: list[str] | None = None,
     ) -> None:
         self._sections = required_sections or _DEFAULT_REQUIRED_SECTIONS
         self._patterns = error_patterns or _DEFAULT_ERROR_PATTERNS
@@ -111,6 +140,7 @@ class SelfVerificationMiddleware(AgentMiddleware):
         self._retry_count = 0
         self._verify_task = verify_against_task
         self._llm = llm
+        self._completion_checks = completion_checks or []
 
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
@@ -139,6 +169,20 @@ class SelfVerificationMiddleware(AgentMiddleware):
                 missing = verify_output_against_task(self._llm, task_text, content)
                 if missing:
                     issues.extend(missing)
+
+        # Custom completion checks (LLM-evaluated)
+        if not issues and self._completion_checks and self._llm:
+            task_text = ""
+            for msg in messages:
+                if hasattr(msg, "type") and msg.type == "human":
+                    task_text = (msg.content or "")[:500]
+                    break
+            if task_text:
+                check_issues = _evaluate_completion_checks(
+                    self._llm, task_text, output, self._completion_checks
+                )
+                if check_issues:
+                    issues.extend(check_issues)
 
         if not issues:
             self._retry_count = 0

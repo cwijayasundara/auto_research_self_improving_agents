@@ -26,6 +26,9 @@ class HarnessConfig:
         default_factory=lambda: ["summary", "finding", "source"]
     )
 
+    # Custom completion checks (evaluated by LLM)
+    completion_checks: list[str] = field(default_factory=list)
+
     # LoopDetection
     max_similar: int = 3
     max_total: int = 12
@@ -44,6 +47,12 @@ class HarnessConfig:
 
     # ContextAssembly
     detect_env: bool = True
+
+    # Search tool
+    search_max_retries: int = 1
+    search_retry_delay: int = 2
+    search_max_results: int = 3
+    search_depth: str = "basic"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

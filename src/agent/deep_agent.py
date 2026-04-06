@@ -120,7 +120,12 @@ def create_agent(
 ) -> CompiledStateGraph[Any, Any]:
     """Create the deep research agent with memory-augmented prompts."""
     llm = create_llm(settings)
-    search_tool = create_search_tool(settings)
+
+    # Load harness config early so it can be used for tool creation
+    harness_store = HarnessConfigStore(settings.harness_config_path)
+    harness_cfg = harness_store.load_best()
+
+    search_tool = create_search_tool(settings, harness_config=harness_cfg)
     tools: list[BaseTool] = [search_tool]
     if extra_tools:
         tools.extend(extra_tools)
@@ -157,9 +162,6 @@ def create_agent(
     )
 
     # Build harness middleware stack (zero extra LLM calls)
-    harness_store = HarnessConfigStore(settings.harness_config_path)
-    harness_cfg = harness_store.load_best()
-
     harness_middleware = default_middleware_stack(
         task=task,
         skills_dir=settings.skills_path,

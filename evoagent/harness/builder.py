@@ -41,6 +41,7 @@ def default_middleware_stack(
             min_length=harness_config.min_length if harness_config else 500,
             verify_against_task=harness_config.verify_against_task if harness_config else verify_against_task,
             llm=llm,
+            completion_checks=harness_config.completion_checks if harness_config else None,
         ),
         ContextAssemblyMiddleware(
             skills_dir=skills_dir,

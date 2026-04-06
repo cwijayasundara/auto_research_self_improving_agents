@@ -155,6 +155,67 @@ class TestRunLogTraceCapture:
         assert entries[0].trace_path == "/tmp/trace.json"
 
 
+class TestToolConfig:
+    def test_harness_config_has_tool_fields(self):
+        from src.evolution.harness_config import HarnessConfig
+        cfg = HarnessConfig()
+        assert cfg.search_max_retries == 1
+        assert cfg.search_retry_delay == 2
+        assert cfg.search_max_results == 3
+        assert cfg.search_depth == "basic"
+
+    def test_tool_config_roundtrip(self):
+        from src.evolution.harness_config import HarnessConfig
+        cfg = HarnessConfig(search_max_retries=3, search_depth="advanced")
+        d = cfg.to_dict()
+        restored = HarnessConfig.from_dict(d)
+        assert restored.search_max_retries == 3
+        assert restored.search_depth == "advanced"
+
+
+class TestCompletionChecks:
+    def test_default_empty(self):
+        from src.evolution.harness_config import HarnessConfig
+        cfg = HarnessConfig()
+        assert cfg.completion_checks == []
+
+    def test_roundtrip(self):
+        from src.evolution.harness_config import HarnessConfig
+        checks = ["Has 3+ sources", "Addresses all sub-questions"]
+        cfg = HarnessConfig(completion_checks=checks)
+        d = cfg.to_dict()
+        restored = HarnessConfig.from_dict(d)
+        assert restored.completion_checks == checks
+
+
+class TestCompletionCheckEvaluation:
+    def test_evaluate_completion_checks_passes(self):
+        from unittest.mock import MagicMock
+        from evoagent.harness.middleware import _evaluate_completion_checks
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content='{"passed": true}')
+
+        result = _evaluate_completion_checks(
+            mock_llm, "test task", "test output", ["has sources"]
+        )
+        assert result == []
+
+    def test_evaluate_completion_checks_fails(self):
+        from unittest.mock import MagicMock
+        from evoagent.harness.middleware import _evaluate_completion_checks
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(
+            content='{"passed": false, "failures": ["Missing sources"]}'
+        )
+
+        result = _evaluate_completion_checks(
+            mock_llm, "test task", "test output", ["has 3+ sources"]
+        )
+        assert "Missing sources" in result
+
+
 class TestHarnessConfigWiring:
     def test_build_middleware_from_config(self):
         from evoagent.harness.builder import default_middleware_stack

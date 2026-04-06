@@ -48,13 +48,15 @@ class ResilientSearch(BaseTool):
     )
     tavily_tool: TavilySearch
     ddg_tool: DuckDuckGoSearchResults
+    max_retries: int = MAX_RETRIES
+    retry_delay: int = RETRY_DELAY_SECONDS
 
     class Config:
         arbitrary_types_allowed = True
 
     def _search_tavily(self, query: str) -> str | None:
         """Try Tavily search. Returns result string or None on failure."""
-        for attempt in range(1 + MAX_RETRIES):
+        for attempt in range(1 + self.max_retries):
             try:
                 result = self.tavily_tool._run(query)
                 # Tavily may return {'error': ...} dict instead of raising
@@ -73,14 +75,14 @@ class ResilientSearch(BaseTool):
                 if _is_quota_error(exc):
                     logger.warning("Tavily quota/rate limit hit: %s", exc)
                     return None  # Fall through to DDG immediately
-                if attempt < MAX_RETRIES:
+                if attempt < self.max_retries:
                     logger.warning(
                         "Tavily search failed (attempt %d/%d): %s — retrying",
                         attempt + 1,
-                        1 + MAX_RETRIES,
+                        1 + self.max_retries,
                         exc,
                     )
-                    time.sleep(RETRY_DELAY_SECONDS)
+                    time.sleep(self.retry_delay)
                 else:
                     logger.warning("Tavily search failed after retries: %s", exc)
         return None
@@ -121,18 +123,38 @@ class ResilientSearch(BaseTool):
         )
 
 
-def create_search_tool(settings: Settings) -> BaseTool:
+def create_search_tool(settings: Settings, harness_config=None) -> BaseTool:
     """Create a search tool with Tavily primary and DuckDuckGo fallback.
 
     Tavily provides higher quality results but requires an API key and has
     plan limits. DuckDuckGo is free and unlimited but returns less structured
     results. The tool tries Tavily first and falls back to DDG on failure.
+
+    When *harness_config* is provided, its search_* fields override the
+    module-level defaults for max_results, search_depth, max_retries, and
+    retry_delay.
     """
+    max_results = DEFAULT_MAX_RESULTS
+    search_depth = DEFAULT_SEARCH_DEPTH
+    max_retries = MAX_RETRIES
+    retry_delay = RETRY_DELAY_SECONDS
+
+    if harness_config is not None:
+        max_results = getattr(harness_config, "search_max_results", max_results)
+        search_depth = getattr(harness_config, "search_depth", search_depth)
+        max_retries = getattr(harness_config, "search_max_retries", max_retries)
+        retry_delay = getattr(harness_config, "search_retry_delay", retry_delay)
+
     tavily = TavilySearch(
-        max_results=DEFAULT_MAX_RESULTS,
-        search_depth=DEFAULT_SEARCH_DEPTH,
+        max_results=max_results,
+        search_depth=search_depth,
         tavily_api_key=settings.tavily_api_key,
     )
-    ddg = DuckDuckGoSearchResults(num_results=DEFAULT_MAX_RESULTS)
+    ddg = DuckDuckGoSearchResults(num_results=max_results)
 
-    return ResilientSearch(tavily_tool=tavily, ddg_tool=ddg)
+    return ResilientSearch(
+        tavily_tool=tavily,
+        ddg_tool=ddg,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
