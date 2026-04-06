@@ -138,7 +138,10 @@ def propose_harness_changes(
         trace_data=trace_data or "(no trace data available)",
     )
 
-    raw_response = llm(prompt)
+    from langchain_core.messages import HumanMessage
+
+    response = llm.invoke([HumanMessage(content=prompt)])
+    raw_response = response.content
     parsed = parse_llm_json(raw_response)
 
     changes = parsed.get("changes", {})

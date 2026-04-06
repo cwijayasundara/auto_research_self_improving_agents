@@ -65,15 +65,17 @@ class TestBuildHarnessDiagnosis:
 class TestProposeHarnessChanges:
     def test_returns_valid_config(self):
         llm = MagicMock()
-        llm.return_value = json.dumps(
-            {
-                "changes": {
-                    "max_retries": 4,
-                    "min_length": 1000,
-                    "planning_effort": "high",
-                },
-                "reasoning": "Increasing retries to improve reliability.",
-            }
+        llm.invoke.return_value = MagicMock(
+            content=json.dumps(
+                {
+                    "changes": {
+                        "max_retries": 4,
+                        "min_length": 1000,
+                        "planning_effort": "high",
+                    },
+                    "reasoning": "Increasing retries to improve reliability.",
+                }
+            )
         )
 
         config = HarnessConfig()
@@ -88,18 +90,20 @@ class TestProposeHarnessChanges:
 
     def test_clamps_extreme_values(self):
         llm = MagicMock()
-        llm.return_value = json.dumps(
-            {
-                "changes": {
-                    "max_retries": 999,
-                    "min_length": 1,
-                    "max_similar": 0,
-                    "budget_seconds": 9999,
-                    "planning_calls": -5,
-                    "planning_effort": "extreme",  # invalid
-                },
-                "reasoning": "Push limits.",
-            }
+        llm.invoke.return_value = MagicMock(
+            content=json.dumps(
+                {
+                    "changes": {
+                        "max_retries": 999,
+                        "min_length": 1,
+                        "max_similar": 0,
+                        "budget_seconds": 9999,
+                        "planning_calls": -5,
+                        "planning_effort": "extreme",  # invalid
+                    },
+                    "reasoning": "Push limits.",
+                }
+            )
         )
 
         config = HarnessConfig()
@@ -124,11 +128,13 @@ class TestOptimizeHarness:
             store.save(HarnessConfig())  # v1 baseline
 
             llm = MagicMock()
-            llm.return_value = json.dumps(
-                {
-                    "changes": {"max_retries": 5},
-                    "reasoning": "More retries needed.",
-                }
+            llm.invoke.return_value = MagicMock(
+                content=json.dumps(
+                    {
+                        "changes": {"max_retries": 5},
+                        "reasoning": "More retries needed.",
+                    }
+                )
             )
 
             entries = [_make_entry(score=0.4)]
