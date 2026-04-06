@@ -8,12 +8,10 @@ signal has accumulated.
 import json
 import logging
 import threading
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from evoagent.core.types import GraderResult
 
 logger = logging.getLogger(__name__)
 

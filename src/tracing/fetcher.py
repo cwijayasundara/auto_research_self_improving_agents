@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from src.config.settings import Settings
-from evoagent.tracing.trajectory import TrajectoryRecord
-
 logger = logging.getLogger(__name__)
 
 # Max chars per child run output to keep trace data manageable
@@ -256,78 +254,6 @@ class TraceFetcher:
         content = msg.get("content", "")
         return _truncate(content, 200)
 
-    def _format_trace_tree(self, run) -> str:
-        """Format a LangSmith run (with child_runs) as diagnostic text."""
-        parts: list[str] = []
-
-        # Root run summary
-        duration = ""
-        if run.start_time and run.end_time:
-            delta = (run.end_time - run.start_time).total_seconds()
-            duration = f" ({delta:.1f}s)"
-        status = run.status or "unknown"
-        tokens = run.total_tokens or 0
-        parts.append(f"Root: {run.name} [{status}]{duration} tokens={tokens}")
-
-        if run.error:
-            parts.append(f"ERROR: {run.error[:300]}")
-
-        # Child runs (the detailed execution trace)
-        children = run.child_runs or []
-        for i, child in enumerate(children[:_MAX_CHILD_RUNS]):
-            prefix = f"  [{i+1}/{len(children)}]"
-            run_type = child.run_type or "unknown"
-            name = child.name or "?"
-
-            if run_type == "tool":
-                # Tool call — show name, input args, output/error
-                args = _truncate(str(child.inputs), 200)
-                output = _truncate(str(child.outputs or ""), _MAX_OUTPUT_CHARS)
-                error = child.error
-                parts.append(f"{prefix} TOOL: {name}")
-                parts.append(f"         args: {args}")
-                if error:
-                    parts.append(f"         ERROR: {error[:200]}")
-                elif output:
-                    parts.append(f"         output: {output}")
-
-            elif run_type == "llm":
-                # Model call — show what tools were called, reasoning snippet
-                output_text = ""
-                if child.outputs and isinstance(child.outputs, dict):
-                    generations = child.outputs.get("generations", [[]])
-                    if generations and generations[0]:
-                        gen = generations[0][0]
-                        if isinstance(gen, dict):
-                            msg = gen.get("message", {})
-                            if isinstance(msg, dict):
-                                # Check for tool calls
-                                tool_calls = msg.get("tool_calls", [])
-                                if tool_calls:
-                                    tc_names = [tc.get("name", "?") for tc in tool_calls]
-                                    output_text = f"called tools: {tc_names}"
-                                else:
-                                    content = msg.get("content", "")
-                                    output_text = _truncate(content, 200)
-                child_tokens = child.total_tokens or 0
-                parts.append(f"{prefix} LLM: {name} tokens={child_tokens}")
-                if output_text:
-                    parts.append(f"         -> {output_text}")
-                if child.error:
-                    parts.append(f"         ERROR: {child.error[:200]}")
-
-            elif run_type == "chain":
-                # Sub-chain (e.g., subagent)
-                child_status = child.status or "?"
-                parts.append(f"{prefix} CHAIN: {name} [{child_status}]")
-                if child.error:
-                    parts.append(f"         ERROR: {child.error[:200]}")
-
-        if len(children) > _MAX_CHILD_RUNS:
-            parts.append(f"  ... {len(children) - _MAX_CHILD_RUNS} more child runs truncated")
-
-        return "\n".join(parts)
-
     def _run_to_dict(self, run) -> dict[str, Any]:
         """Convert a LangSmith run object to a serializable dict."""
         return {
@@ -341,15 +267,6 @@ class TraceFetcher:
             "total_tokens": run.total_tokens or 0,
         }
 
-    # Legacy method kept for backward compatibility with orchestrator
-    def fetch_and_parse(self, limit: int = 10) -> list[TrajectoryRecord]:
-        """Return empty list — orchestrator uses local trajectories for grading.
-
-        Rich traces are fetched separately by the optimizer via
-        fetch_traces_for_entries().
-        """
-        logger.info("Skipping LangSmith trace fetch; using local trajectories")
-        return []
 
 
 def _truncate(text: str, max_len: int) -> str:

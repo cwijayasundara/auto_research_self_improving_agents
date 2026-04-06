@@ -201,20 +201,6 @@ def build_orchestrator_graph(
 
         return {"trajectories": trajectories}
 
-    def node_fetch_traces(state: OrchestratorState) -> dict[str, Any]:
-        """Fetch traces from LangSmith for the batch runs."""
-        logger.info("--- Fetch LangSmith Traces ---")
-        try:
-            fetched = trace_fetcher.fetch_and_parse(limit=len(state["tasks"]))
-            if fetched:
-                logger.info("Fetched %d traces from LangSmith", len(fetched))
-                return {"trajectories": fetched}
-            logger.info("No traces returned, using local trajectories")
-        except Exception as exc:
-            logger.warning("LangSmith trace fetch failed: %s", exc)
-            logger.info("Continuing with local trajectories (grading still works)")
-        return {}
-
     def node_analyze(state: OrchestratorState) -> dict[str, Any]:
         """Analyze all trajectories through the grading pipeline."""
         logger.info("--- Analyze Trajectories ---")
@@ -528,7 +514,6 @@ def build_orchestrator_graph(
     graph = StateGraph(OrchestratorState)
 
     graph.add_node("run_batch", node_run_batch)
-    graph.add_node("fetch_traces", node_fetch_traces)
     graph.add_node("analyze", node_analyze)
     graph.add_node("reflect", node_reflect)
     graph.add_node("compress_memories", node_compress_memories)
@@ -539,10 +524,9 @@ def build_orchestrator_graph(
     graph.add_node("persist_state", node_persist_state)
     graph.add_node("aggregate_metrics", node_aggregate_metrics)
 
-    # Wire edges — enhanced pipeline with failure skills + state persistence
+    # Wire edges
     graph.add_edge(START, "run_batch")
-    graph.add_edge("run_batch", "fetch_traces")
-    graph.add_edge("fetch_traces", "analyze")
+    graph.add_edge("run_batch", "analyze")
     graph.add_edge("analyze", "reflect")
     graph.add_edge("reflect", "compress_memories")
     graph.add_edge("compress_memories", "extract_skills")
