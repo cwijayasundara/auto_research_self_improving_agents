@@ -361,6 +361,7 @@ def build_orchestrator_graph(
                 skills_dir=settings.skills_path,
                 settings=settings,
                 memory_store=memory_store,
+                trace_fetcher=trace_fetcher,
             )
         except Exception as exc:
             logger.error("Prompt optimization failed: %s", exc)

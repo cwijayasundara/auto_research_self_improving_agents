@@ -150,11 +150,13 @@ def _build_dimension_breakdown(analyses: list[AnalysisResult]) -> str:
 def analyze_failures(
     analyses: list[AnalysisResult],
     traces_dir: Path | None = None,
+    trace_fetcher: Any | None = None,
 ) -> dict[str, Any]:
     """Aggregate failure patterns from failed/partial trajectories.
 
     Enhanced with trace digest and per-dimension breakdown to give the
-    prompt optimizer actionable diagnostic context.
+    prompt optimizer actionable diagnostic context. Uses LangSmith traces
+    when available for richer diagnostics.
     """
     failed = [a for a in analyses if a["classification"] in ("failed", "partial")]
     if not failed:
@@ -176,11 +178,18 @@ def analyze_failures(
     unique_issues = list(dict.fromkeys(issues))
 
     # Build trace digests for failed trajectories (max 3)
+    # Try LangSmith first for rich traces, fall back to local
     trace_digests: list[str] = []
-    for analysis in failed[:3]:
-        digest = _build_trace_digest(analysis["task"], traces_dir)
-        if digest:
-            trace_digests.append(f"### Trace for: {analysis['task'][:80]}\n{digest}")
+    if trace_fetcher is not None:
+        for analysis in failed[:3]:
+            rich = trace_fetcher.fetch_rich_trace_for_task(analysis["task"], max_results=1)
+            if rich:
+                trace_digests.append(f"### Trace for: {analysis['task'][:80]}\n{rich}")
+    if not trace_digests:
+        for analysis in failed[:3]:
+            digest = _build_trace_digest(analysis["task"], traces_dir)
+            if digest:
+                trace_digests.append(f"### Trace for: {analysis['task'][:80]}\n{digest}")
 
     failure_summary = (
         f"Analyzed {len(failed)} failed/partial trajectories. "
@@ -406,6 +415,7 @@ def optimize_prompt(
     skills_dir: Path | None = None,
     settings=None,
     memory_store=None,
+    trace_fetcher=None,
 ) -> int:
     """Run the full prompt optimization pipeline.
 
@@ -414,6 +424,7 @@ def optimize_prompt(
         prompt_store: Store for versioned prompts
         analyses: Analysis results from the current cycle
         skills_dir: Optional path to skills directory for skill-aware optimization
+        trace_fetcher: Optional TraceFetcher for rich LangSmith traces
 
     Returns:
         New prompt version number
@@ -423,7 +434,7 @@ def optimize_prompt(
         logger.info("No failures to optimize against, keeping current prompt")
         return prompt_store.get_latest_version_number()
 
-    failure_info = analyze_failures(analyses)
+    failure_info = analyze_failures(analyses, trace_fetcher=trace_fetcher)
 
     current_prompt = prompt_store.get_current_prompt()
     all_scores = [a["average_score"] for a in analyses]

@@ -74,10 +74,13 @@ def _run_evolution_cycle(
     Unlike the full `evolve` loop, this does NOT re-run tasks. It works
     entirely on the grading results already collected from user interactions.
     """
+    from src.tracing.fetcher import TraceFetcher
+
     llm = create_llm(settings)
     prompt_store = PromptStore(settings.prompts_path)
     memory_store = FileMemoryStore(settings.memory_path)
     skill_manager = SkillManager(settings.skills_path)
+    trace_fetcher = TraceFetcher(settings)
 
     analyses = _entries_to_analyses(entries)
     n_partial = sum(1 for a in analyses if a["classification"] == "partial")
@@ -110,6 +113,7 @@ def _run_evolution_cycle(
             skills_dir=settings.skills_path,
             settings=settings,
             memory_store=memory_store,
+            trace_fetcher=trace_fetcher,
         )
         if new_version != old_version:
             logger.info("Prompt upgraded: v%d -> v%d", old_version, new_version)
@@ -154,7 +158,7 @@ def _run_evolution_cycle(
     try:
         harness_store = HarnessConfigStore(settings.harness_config_path)
         old_harness_version = harness_store.get_latest_version()
-        new_harness_version = optimize_harness(llm, entries, harness_store)
+        new_harness_version = optimize_harness(llm, entries, harness_store, trace_fetcher=trace_fetcher)
         if new_harness_version != old_harness_version:
             logger.info(
                 "Harness config upgraded: v%d -> v%d",

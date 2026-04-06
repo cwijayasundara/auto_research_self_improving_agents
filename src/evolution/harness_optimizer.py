@@ -226,8 +226,12 @@ def optimize_harness(
     llm: Callable[..., str],
     entries: list[RunLogEntry],
     config_store: HarnessConfigStore,
+    trace_fetcher=None,
 ) -> int:
     """Main entry point: diagnose, collect traces, propose changes, save.
+
+    Uses LangSmith traces when available for richer diagnostics,
+    falls back to local trace files.
 
     Returns the new config version number.
     """
@@ -236,15 +240,20 @@ def optimize_harness(
     # Build diagnosis
     diagnosis = build_harness_diagnosis(entries, current_config)
 
-    # Collect trace data (up to 5 traces)
-    trace_parts: list[str] = []
-    for entry in entries[:5]:
-        tp = getattr(entry, "trace_path", "")
-        if tp:
-            summary = _load_trace(tp)
-            if summary:
-                trace_parts.append(summary)
-    trace_data = "\n\n".join(trace_parts)
+    # Collect trace data — prefer LangSmith, fall back to local
+    trace_data = ""
+    if trace_fetcher is not None:
+        trace_data = trace_fetcher.fetch_traces_for_entries(entries, max_traces=5)
+
+    if not trace_data:
+        trace_parts: list[str] = []
+        for entry in entries[:5]:
+            tp = getattr(entry, "trace_path", "")
+            if tp:
+                summary = _load_trace(tp)
+                if summary:
+                    trace_parts.append(summary)
+        trace_data = "\n\n".join(trace_parts)
 
     # Propose changes
     new_config, reasoning = propose_harness_changes(
