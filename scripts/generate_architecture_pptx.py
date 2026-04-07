@@ -10,6 +10,7 @@ from pptx.util import Inches, Pt
 
 
 OUT_PATH = Path("docs/self_improving_agent_architecture.pptx")
+OUT_PATH_ROOT = Path("self_evolving_agents.pptx")
 
 BG = RGBColor(245, 247, 250)
 NAVY = RGBColor(14, 34, 64)
@@ -297,7 +298,7 @@ def slide_runtime(prs: Presentation) -> None:
     set_bg(slide)
     add_title(slide, "Application Runtime Architecture", "The `src/` package specializes the framework into a self-improving research agent.")
 
-    add_box(slide, 0.55, 1.55, 2.25, 1.2, "Version Stores", "PromptStore picks best prompt.\nHarnessConfigStore picks best harness config.", fill=WHITE, line=BLUE, title_fill=BLUE)
+    add_box(slide, 0.55, 1.55, 2.25, 1.2, "Version Stores", "PromptStore returns LATEST promoted prompt (ratchet).\nHarnessConfigStore returns LATEST promoted config.\nFrozen `promotion_score` per version.", fill=WHITE, line=BLUE, title_fill=BLUE)
     add_arrow(slide, 2.95, 1.92, 0.65, 0.42)
     add_box(slide, 3.75, 1.35, 2.6, 1.6, "Agent Factory\n`src/agent/deep_agent.py`", "Creates LLM.\nCreates search tool with harness-tuned parameters.\nLoads prompt, memory context, skills, subagents, middleware.", fill=WHITE, line=TEAL, title_fill=TEAL)
     add_arrow(slide, 6.5, 1.92, 0.65, 0.42)
@@ -352,13 +353,13 @@ def slide_single_run(prs: Presentation) -> None:
     add_arrow(slide, 2.65, 1.95, 0.55, 0.3)
     add_box(slide, 3.3, 1.6, 2.0, 1.0, "2. Grade", "Trajectory is scored for task completion, quality, efficiency, and claim verification.", fill=WHITE, line=TEAL, title_fill=TEAL)
     add_arrow(slide, 5.4, 1.95, 0.55, 0.3)
-    add_box(slide, 6.05, 1.6, 2.0, 1.0, "3. Version scoring", "Current prompt version and current harness config version receive incremental score updates.", fill=WHITE, line=GOLD, title_fill=GOLD)
+    add_box(slide, 6.05, 1.6, 2.0, 1.0, "3. Observed score", "Per-run scores feed the running observed average.\nThe frozen `promotion_score` is NOT touched here.", fill=WHITE, line=GOLD, title_fill=GOLD)
     add_arrow(slide, 8.15, 1.95, 0.55, 0.3)
     add_box(slide, 8.8, 1.6, 2.0, 1.0, "4. Run log", "Structured entry is appended to `evolution_state/run_log.jsonl`.", fill=WHITE, line=RED, title_fill=RED)
     add_arrow(slide, 10.9, 1.95, 0.55, 0.3)
     add_box(slide, 11.55, 1.6, 1.25, 1.0, "5. Reflect", "Store episodic + semantic memory.", fill=WHITE, line=SLATE, title_fill=SLATE)
 
-    add_box(slide, 0.75, 3.1, 5.9, 2.8, "What gets persisted immediately", "`PromptStore.update_score()` and `HarnessConfigStore.update_score()` make every run contribute to the ranking of active versions.\n\n`RunLogEntry` captures task, output, classification, average score, per-grader reasoning, prompt version, harness config version, and optional trace path.\n\n`reflect_and_store()` writes:\n- episodic memory = run summary, what worked, what to improve, output preview\n- semantic memory = extracted facts and patterns", fill=RGBColor(252, 252, 252), line=SLATE)
+    add_box(slide, 0.75, 3.1, 5.9, 2.8, "What gets persisted immediately", "`update_score()` only mutates the running observed average. The `promotion_score` field is frozen at promotion time, so observed drift can never silently roll the active version backward (the ratchet).\n\n`RunLogEntry` captures task, output, classification, average score, per-grader reasoning, prompt version, harness config version, and optional trace path.\n\n`reflect_and_store()` writes:\n- episodic memory = run summary, what worked, what to improve, output preview\n- semantic memory = extracted facts and patterns", fill=RGBColor(252, 252, 252), line=SLATE)
     add_box(slide, 6.95, 3.1, 5.65, 2.8, "Why this matters", "The project does not wait for a separate benchmark stage to learn.\nEvery user task is simultaneously:\n- serving traffic\n- producing reward signal\n- producing text feedback\n- producing memory\n- producing trace evidence for later diagnosis", fill=RGBColor(252, 252, 252), line=SLATE)
     add_footer(slide, "Per-run loop = hot-path learning and evidence capture")
 
@@ -368,9 +369,9 @@ def slide_daemon(prs: Presentation) -> None:
     set_bg(slide)
     add_title(slide, "Background Daemon", "`src/evolution/daemon.py` is the primary continuous-improvement loop.")
 
-    add_box(slide, 0.65, 1.55, 2.15, 1.1, "Trigger", "Poll `run_log.jsonl` every 60s.\nStart when 3+ unprocessed runs are available.", fill=WHITE, line=BLUE, title_fill=BLUE)
+    add_box(slide, 0.65, 1.55, 2.15, 1.1, "Trigger", "Poll `run_log.jsonl` every 60s.\nStart when 3+ unprocessed runs accumulate.\nLoad held-out tasks via `_load_holdout_tasks()` (stable seed=42).", fill=WHITE, line=BLUE, title_fill=BLUE)
     add_arrow(slide, 2.95, 1.92, 0.55, 0.3)
-    add_box(slide, 3.55, 1.3, 2.0, 1.6, "1. Prompt opt", "Analyze failures and traces.\nGenerate prompt candidates.\nSave new version only if changed.", fill=WHITE, line=TEAL, title_fill=TEAL)
+    add_box(slide, 3.55, 1.3, 2.0, 1.6, "1. Prompt opt", "Analyze failures + traces.\nGenerate candidates.\nGate via held-out pairwise.\nNo orphan writes on reject.", fill=WHITE, line=TEAL, title_fill=TEAL)
     add_arrow(slide, 5.7, 1.92, 0.45, 0.3)
     add_box(slide, 6.2, 1.3, 1.75, 1.6, "2. Success skills", "Extract reusable patterns from high-scoring runs.", fill=WHITE, line=GOLD, title_fill=GOLD)
     add_arrow(slide, 8.08, 1.92, 0.45, 0.3)
@@ -378,8 +379,8 @@ def slide_daemon(prs: Presentation) -> None:
     add_arrow(slide, 10.46, 1.92, 0.45, 0.3)
     add_box(slide, 10.96, 1.3, 1.75, 1.6, "4. Memory compression", "Deduplicate semantic memory.", fill=WHITE, line=SLATE, title_fill=SLATE)
 
-    add_box(slide, 1.15, 3.55, 11.0, 2.15, "5. Harness optimization closes the loop", "After prompt/skill/memory updates, the daemon runs `optimize_harness()`.\nIt reads grading summaries + trace evidence, proposes parameter changes to `HarnessConfig`, validates and clamps them, saves a new harness version, and future agent runs automatically load `load_best()` from the harness store.\n\nFinally the daemon marks the processed run IDs so the same evidence is not replayed forever.", fill=RGBColor(252, 252, 252), line=NAVY, title_fill=NAVY)
-    add_footer(slide, "Cold-start path: `src evolve` bootstraps initial versions; daemon handles live improvement after that")
+    add_box(slide, 1.15, 3.55, 11.0, 2.15, "5. Harness optimization (also gated)", "After prompt/skill/memory updates, `optimize_harness()` reads grading summaries + trace evidence, proposes changes to `HarnessConfig`, then runs `validate_candidate_harness()` against the SAME held-out task set: each task is run once with the current config and once with the candidate, with the same prompt, then pairwise compared. Only proposals that win strict majority on the holdout are saved.\n\nWhen the gate rejects, the optimizer returns the unchanged version number — no file is written and no phantom 'Harness upgraded' line appears in the daemon log.", fill=RGBColor(252, 252, 252), line=NAVY, title_fill=NAVY)
+    add_footer(slide, "Cold-start path: `src evolve` bootstraps; the daemon handles all live improvement after that")
 
 
 def slide_harness_update(prs: Presentation) -> None:
@@ -387,10 +388,10 @@ def slide_harness_update(prs: Presentation) -> None:
     set_bg(slide)
     add_title(slide, "How the Harness Gets Updated", "This is the most explicit embodiment of the Meta-Harness idea in the project.")
 
-    add_box(slide, 0.65, 1.5, 3.0, 1.65, "Diagnostic inputs", "Run-log entries provide average scores, classifications, and per-grader reasons.\nTrace fetcher prefers LangSmith traces and falls back to local JSON traces.\nThe optimizer sees both metric summaries and execution details.", fill=WHITE, line=BLUE, title_fill=BLUE)
-    add_box(slide, 3.95, 1.5, 3.0, 1.65, "LLM proposal phase", "The harness optimizer prompt includes:\n- current config\n- per-dimension failure rates\n- top failure reasons\n- trace data\nThe LLM proposes JSON changes rather than free-form code edits.", fill=WHITE, line=TEAL, title_fill=TEAL)
-    add_box(slide, 7.25, 1.5, 2.4, 1.65, "Safety layer", "Unknown parameters are ignored.\nEffort strings are validated.\nNumeric values are clamped to safe bounds.\nInvalid candidates are dropped.", fill=WHITE, line=GOLD, title_fill=GOLD)
-    add_box(slide, 9.95, 1.5, 2.4, 1.65, "Selection strategy", "Generate multiple candidates and choose the most conservative one: the proposal with the fewest actual changes.", fill=WHITE, line=RED, title_fill=RED)
+    add_box(slide, 0.65, 1.5, 2.9, 1.65, "Diagnostic inputs", "Run-log entries provide scores, classifications, and per-grader reasons.\nTrace fetcher prefers LangSmith traces, falls back to local JSON.\nOptimizer sees both metrics and execution details.", fill=WHITE, line=BLUE, title_fill=BLUE)
+    add_box(slide, 3.85, 1.5, 2.9, 1.65, "LLM proposal phase", "Optimizer prompt includes current config, per-dimension failure rates, top failure reasons, trace data.\nLLM emits JSON changes, not free-form code edits.\nMost-conservative-pick across multiple candidates.", fill=WHITE, line=TEAL, title_fill=TEAL)
+    add_box(slide, 7.05, 1.5, 2.6, 1.65, "Safety layer", "Unknown parameters ignored.\nEffort strings validated.\nNumeric values clamped to safe bounds.\nInvalid candidates dropped.", fill=WHITE, line=GOLD, title_fill=GOLD)
+    add_box(slide, 9.95, 1.5, 2.75, 1.65, "Held-out promotion gate", "`validate_candidate_harness()` runs each held-out task with BOTH old and new config (same prompt). Pairwise judge compares outputs. Strict majority required.\nLoser is not saved.", fill=WHITE, line=RED, title_fill=RED)
 
     add_box(slide, 0.95, 3.7, 11.8, 2.15, "What can evolve", "Middleware behavior:\n`max_retries`, `min_length`, `verify_against_task`, `required_sections`, `completion_checks`, `max_similar`, `max_total`, `max_file_edits`, `max_repeated_tools`, `budget_seconds`, `warn_at`, `planning_effort`, `implementation_effort`, `verification_effort`, `planning_calls`, `detect_env`.\n\nTool behavior:\n`search_max_retries`, `search_retry_delay`, `search_max_results`, `search_depth`.\n\nBecause the search tool is created with `harness_cfg`, tool-level behavior and harness-level behavior evolve together.", fill=RGBColor(252, 252, 252), line=SLATE)
     add_footer(slide, "Updated harness versions are JSON config files, so rollback and inspection stay simple")
@@ -401,7 +402,7 @@ def slide_context(prs: Presentation) -> None:
     set_bg(slide)
     add_title(slide, "How Context Evolves Dynamically", "The project learns in token space: prompts, skills, memories, and meta-instructions are treated as mutable context.")
 
-    add_box(slide, 0.55, 1.55, 3.05, 1.9, "Prompt evolution", "Prompt versions live in `prompts/v*.json`.\nEach run updates the current version's score.\nThe daemon can add a new prompt version based on failure analysis and learned skills.\n`get_current_prompt()` returns the best-scoring prompt.", fill=WHITE, line=BLUE, title_fill=BLUE)
+    add_box(slide, 0.55, 1.55, 3.05, 1.9, "Prompt evolution", "Prompt versions live in `prompts/v*.json`.\nEach run updates the version's running observed score.\nDaemon adds a new version only after held-out pairwise validation passes.\n`get_current_prompt()` returns the LATEST promoted version (ratchet).", fill=WHITE, line=BLUE, title_fill=BLUE)
     add_box(slide, 3.85, 1.55, 3.05, 1.9, "Skill evolution", "Success runs create reusable skills.\nFailure runs create defensive skills.\n`ContextAssemblyMiddleware` discovers skills and injects the available skill catalog into the first model call.", fill=WHITE, line=TEAL, title_fill=TEAL)
     add_box(slide, 7.15, 1.55, 2.75, 1.9, "Memory evolution", "Reflection stores episodic summaries and semantic facts/patterns.\nCompression prioritizes meta-instructions, then learned patterns, then recent run summaries under a token budget.", fill=WHITE, line=GOLD, title_fill=GOLD)
     add_box(slide, 10.15, 1.55, 2.55, 1.9, "Sleep-time review", "Cross-run trace analysis writes `meta_instruction` memories and can remove contradictory semantic memories.", fill=WHITE, line=RED, title_fill=RED)
@@ -434,6 +435,34 @@ def slide_closed_loop(prs: Presentation) -> None:
 
     add_callout(slide, 2.0, 5.95, 9.3, 0.5, "Net effect: the system changes the instructions, controls, and remembered knowledge around the model until the next task is solved under a better operating regime.", NAVY)
     add_footer(slide, "This is continuous systems learning, not one-shot prompt tuning")
+
+
+def slide_ratchet(prs: Presentation) -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    set_bg(slide)
+    add_title(slide, "Promotion Ratchet", "Active versions move only forward; observed-score drift cannot silently roll the champion back.")
+
+    add_box(slide, 0.55, 1.55, 4.0, 2.4, "Frozen `promotion_score`", "Set once at promotion time, never mutated.\nNew champions inherit the parent's `promotion_score` so each promotion has a stable floor.\nUsed by the optimizer for monitoring and as the baseline for the next gate.", fill=WHITE, line=BLUE, title_fill=BLUE)
+    add_box(slide, 4.7, 1.55, 4.0, 2.4, "Running `score`", "Incremental average of post-promotion run scores via `update_score()`.\nDrifts up or down with new evidence.\nServes as the optimizer's signal to ATTEMPT improvement, but does not decide which version is active.", fill=WHITE, line=TEAL, title_fill=TEAL)
+    add_box(slide, 8.85, 1.55, 4.0, 2.4, "Active = LATEST", "`get_current_prompt()` and `load_best()` return the latest version unconditionally.\nNot max-scored.\nA promotion only happens through the held-out gate, so 'latest' is by construction the most recently validated champion.", fill=WHITE, line=GOLD, title_fill=GOLD)
+
+    add_box(slide, 0.85, 4.15, 12.0, 1.7, "What this prevents", "Before the ratchet, a string of unlucky or buggy runs (e.g. the recent `extract_output` regression where phantom self-check strings were graded as the agent's output) would drag the champion's running score below an older version's, and `max(score)` selection would silently activate the older version. The active prompt could change without any optimizer involvement.\n\nWith the ratchet, observed scores can swing freely but the active version only moves forward through an explicit, gated promotion. The system self-corrects through the front door (more optimization) instead of through the back door (silent rollback).", fill=RGBColor(252, 252, 252), line=NAVY, title_fill=NAVY)
+    add_callout(slide, 3.5, 6.15, 6.3, 0.45, "Karpathy ratchet: separate observation from commitment", NAVY)
+    add_footer(slide, "Implementation: `src/agent/prompt_store.py`, `src/evolution/harness_config.py`")
+
+
+def slide_gates(prs: Presentation) -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    set_bg(slide)
+    add_title(slide, "Held-out Promotion Gates", "Both prompt and harness optimizers must beat the champion on a stable held-out task set.")
+
+    add_box(slide, 0.55, 1.5, 4.0, 2.5, "Held-out source", "`tasks/research_tasks.json` is split via `_split_tasks` (random.Random(42), HOLDOUT_FRACTION=0.3).\nThe holdout slice is stable across cycles, so trends are comparable and the optimizer never validates on its own training input.\n`_load_holdout_tasks()` reads it once per cycle in the daemon.", fill=WHITE, line=BLUE, title_fill=BLUE)
+    add_box(slide, 4.7, 1.5, 4.0, 2.5, "Apples-to-apples pairwise", "For each held-out task: run the CURRENT champion and the CANDIDATE fresh, in the same cycle, with the same harness state (or same prompt for the harness gate).\nA pairwise LLM judge picks the better output. Position is randomized to defeat slot bias.\nStrict majority required: `wins_new > wins_old`.", fill=WHITE, line=TEAL, title_fill=TEAL)
+    add_box(slide, 8.85, 1.5, 4.0, 2.5, "Defensive errors + log tags", "Run errors on either side count as a loss for the candidate — the system never promotes a config or prompt that crashes the agent.\nLog tags `[holdout]` (prompt) and `[harness-holdout]` (harness) make the active gate visible at a glance; `[batch-fallback]` flags the legacy overfit-prone path.", fill=WHITE, line=GOLD, title_fill=GOLD)
+
+    add_box(slide, 0.85, 4.2, 12.0, 1.7, "What the gate catches", "The recent harness v2 incident is the canonical example. The optimizer hallucinated that 'broad/low-confidence research outputs' needed `min_length` loosened — but the failures were actually phantom SELF-CHECK strings from a separate `extract_output` bug. Without a gate, the optimizer's reasoning was self-validating: it saw bad outputs, proposed a fix, and the fix was promoted blindly. With the held-out gate, that same proposal would have to actually win pairwise on the holdout. It would not, because the change does not address the real failure mode.\n\nThe gate makes the optimizer pay the cost of being right.", fill=RGBColor(252, 252, 252), line=NAVY, title_fill=NAVY)
+    add_callout(slide, 3.5, 6.2, 6.3, 0.45, "Promotion is now genuinely monotonic", NAVY)
+    add_footer(slide, "Implementation: `src/evolution/prompt_optimizer.py::_validate_on_holdout`, `harness_optimizer.py::validate_candidate_harness`")
 
 
 def slide_files(prs: Presentation) -> None:
@@ -479,10 +508,16 @@ def main() -> None:
     slide_context(prs)
     slide_langsmith(prs)
     slide_closed_loop(prs)
+    slide_ratchet(prs)
+    slide_gates(prs)
     slide_files(prs)
     slide_refs(prs)
     prs.save(OUT_PATH)
     print(f"Wrote {OUT_PATH}")
+    # Also write to the project-root copy that is referenced when sharing
+    # the deck outside the docs folder. Both files stay in sync.
+    prs.save(OUT_PATH_ROOT)
+    print(f"Wrote {OUT_PATH_ROOT}")
 
 
 if __name__ == "__main__":
