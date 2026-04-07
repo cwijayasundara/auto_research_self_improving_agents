@@ -10,6 +10,7 @@ from typing import Any
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
@@ -117,20 +118,32 @@ def create_agent(
     memory_store: FileMemoryStore,
     task: str = "",
     extra_tools: list[BaseTool] | None = None,
+    prompt_override: str | None = None,
+    harness_override: Any = None,
 ) -> CompiledStateGraph[Any, Any]:
-    """Create the deep research agent with memory-augmented prompts."""
+    """Create the deep research agent with memory-augmented prompts.
+
+    If ``prompt_override`` is supplied, it is used in place of the prompt
+    store's current prompt. If ``harness_override`` (a HarnessConfig
+    instance) is supplied, it is used in place of the harness store's
+    current best. Both let pairwise validation try out unsaved candidates
+    without having to persist them first.
+    """
     llm = create_llm(settings)
 
     # Load harness config early so it can be used for tool creation
-    harness_store = HarnessConfigStore(settings.harness_config_path)
-    harness_cfg = harness_store.load_best()
+    if harness_override is not None:
+        harness_cfg = harness_override
+    else:
+        harness_store = HarnessConfigStore(settings.harness_config_path)
+        harness_cfg = harness_store.load_best()
 
     search_tool = create_search_tool(settings, harness_config=harness_cfg)
     tools: list[BaseTool] = [search_tool]
     if extra_tools:
         tools.extend(extra_tools)
 
-    prompt = prompt_store.get_current_prompt() or DEFAULT_SYSTEM_PROMPT
+    prompt = prompt_override or prompt_store.get_current_prompt() or DEFAULT_SYSTEM_PROMPT
 
     memory_context = (
         build_memory_context(memory_store, task, token_budget=settings.memory_token_budget)
@@ -185,12 +198,24 @@ def create_agent(
 
 
 def extract_output(result: dict[str, Any]) -> str:
-    """Extract the final text output from an agent invoke result."""
+    """Extract the final text output from an agent invoke result.
+
+    Walks the message list in reverse and returns the first AIMessage with
+    non-empty text content. Filtering to AIMessage is critical: harness
+    middleware (e.g. SelfVerificationMiddleware) injects HumanMessages like
+    "SELF-CHECK FAILED: ... Revise your report." to trigger a revision pass.
+    Without this filter, those injected HumanMessages would be returned as
+    the agent's "final output" whenever the loop terminates before a fresh
+    text-bearing AIMessage lands, poisoning every downstream grader and
+    optimizer with phantom output.
+    """
     if "output" in result and isinstance(result["output"], str):
         return result["output"]
 
     messages = result.get("messages", [])
     for msg in reversed(messages):
+        if not isinstance(msg, AIMessage):
+            continue
         content = getattr(msg, "content", None)
         if content and isinstance(content, str) and content.strip():
             return content

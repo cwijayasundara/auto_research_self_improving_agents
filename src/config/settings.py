@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     # Traces directory
     traces_dir: str = "traces"
 
+    # Tasks file used by the daemon to source held-out validation tasks.
+    # The daemon splits this file into training/holdout via _split_tasks
+    # (stable seed) and uses the holdout slice for promotion gating in
+    # validate_candidate_prompt. If the file is missing or has too few
+    # tasks, the gate falls back to "current batch failures" behavior
+    # with a warning.
+    tasks_file: str = "tasks/research_tasks.json"
+
     # Memory compression
     memory_token_budget: int = 4000
     compression_similarity_threshold: float = 0.7
@@ -100,6 +108,10 @@ class Settings(BaseSettings):
     @property
     def traces_path(self) -> Path:
         return PROJECT_ROOT / self.traces_dir
+
+    @property
+    def tasks_file_path(self) -> Path:
+        return PROJECT_ROOT / self.tasks_file
 
 
 def load_settings() -> Settings | None:

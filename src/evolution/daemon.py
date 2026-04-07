@@ -10,6 +10,7 @@ Usage:
     python -m src evolve-daemon --interval 120 --min-runs 3
 """
 
+import json
 import logging
 import signal
 import time
@@ -34,6 +35,40 @@ logger = logging.getLogger(__name__)
 # Defaults
 DEFAULT_POLL_INTERVAL = 60  # seconds between checks
 DEFAULT_MIN_RUNS = 3  # minimum unprocessed runs before triggering evolution
+
+
+def _load_holdout_tasks(settings: Settings) -> list[str]:
+    """Load held-out validation tasks from settings.tasks_file.
+
+    Reuses the orchestrator's stable seed=42 split so the held-out slice
+    is deterministic across cycles. Returns an empty list if the file is
+    missing or has too few tasks to split — callers fall back to
+    training-batch validation in that case (with a warning).
+    """
+    tasks_path = settings.tasks_file_path
+    if not tasks_path.exists():
+        logger.info(
+            "Holdout: tasks file %s not found — pairwise gate will use "
+            "training-batch fallback",
+            tasks_path,
+        )
+        return []
+    try:
+        with open(tasks_path) as f:
+            all_tasks = json.load(f)
+        if not isinstance(all_tasks, list):
+            logger.warning("Holdout: %s is not a JSON list", tasks_path)
+            return []
+    except Exception as exc:
+        logger.warning("Holdout: failed to load %s: %s", tasks_path, exc)
+        return []
+
+    # Reuse the orchestrator's stable split (random.Random(42))
+    from src.evolution.orchestrator import _split_tasks
+    _, holdout = _split_tasks(all_tasks)
+    if holdout:
+        logger.info("Holdout: loaded %d tasks for promotion gate", len(holdout))
+    return holdout
 
 
 def _entries_to_analyses(entries: list[RunLogEntry]) -> list[AnalysisResult]:
@@ -103,6 +138,7 @@ def _run_evolution_cycle(
 
     # 1. Prompt optimization (if there are failures/partials)
     old_version = prompt_store.get_latest_version_number()
+    holdout_tasks = _load_holdout_tasks(settings)
     try:
         new_version = optimize_prompt(
             llm,
@@ -112,6 +148,7 @@ def _run_evolution_cycle(
             settings=settings,
             memory_store=memory_store,
             trace_fetcher=trace_fetcher,
+            holdout_tasks=holdout_tasks,
         )
         if new_version != old_version:
             logger.info("Prompt upgraded: v%d -> v%d", old_version, new_version)
@@ -156,7 +193,16 @@ def _run_evolution_cycle(
     try:
         harness_store = HarnessConfigStore(settings.harness_config_path)
         old_harness_version = harness_store.get_latest_version()
-        new_harness_version = optimize_harness(llm, entries, harness_store, trace_fetcher=trace_fetcher)
+        new_harness_version = optimize_harness(
+            llm,
+            entries,
+            harness_store,
+            trace_fetcher=trace_fetcher,
+            settings=settings,
+            prompt_store=prompt_store,
+            memory_store=memory_store,
+            holdout_tasks=holdout_tasks,
+        )
         if new_harness_version != old_harness_version:
             logger.info(
                 "Harness config upgraded: v%d -> v%d",

@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
@@ -142,7 +142,22 @@ class SelfVerificationMiddleware(AgentMiddleware):
         self._llm = llm
         self._completion_checks = completion_checks or []
 
+    @hook_config(can_jump_to=["model"])
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Check the just-emitted AIMessage and request a revision if it fails.
+
+        To actually trigger the revision, this hook must:
+        1. Be decorated with @hook_config(can_jump_to=["model"]) so the graph
+           wires a conditional edge from this node back to "model".
+        2. Return ``{"jump_to": "model"}`` in addition to the new messages.
+
+        Without (1) and (2), LangChain's routing function (see
+        ``_make_model_to_tools_edge`` in ``langchain.agents.factory``) walks
+        backwards to find the last AIMessage, sees its empty ``tool_calls``,
+        and exits to END — silently dropping any HumanMessage we appended.
+        That bug caused max_retries to be dead config and the SELF-CHECK
+        revision pass to never run.
+        """
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
         if not messages:
             return None
@@ -179,7 +194,7 @@ class SelfVerificationMiddleware(AgentMiddleware):
                     break
             if task_text:
                 check_issues = _evaluate_completion_checks(
-                    self._llm, task_text, output, self._completion_checks
+                    self._llm, task_text, content, self._completion_checks
                 )
                 if check_issues:
                     issues.extend(check_issues)
@@ -193,8 +208,14 @@ class SelfVerificationMiddleware(AgentMiddleware):
             return None
 
         self._retry_count += 1
-        revision = HumanMessage(content=f"SELF-CHECK FAILED: {'; '.join(issues)}. Revise your report.")
-        return {"messages": [*messages, revision]}
+        revision = HumanMessage(
+            content=f"SELF-CHECK FAILED: {'; '.join(issues)}. Revise your report."
+        )
+        # Return only the NEW message (the add_messages reducer will append it)
+        # and explicitly jump back to the model node so the revision actually
+        # runs. The matching @hook_config decorator above is what makes the
+        # conditional edge available.
+        return {"messages": [revision], "jump_to": "model"}
 
 
 # --- Context Assembly ---

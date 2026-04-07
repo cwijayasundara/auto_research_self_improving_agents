@@ -276,18 +276,115 @@ def _load_trace(trace_path: str) -> str:
         return ""
 
 
+def validate_candidate_harness(
+    llm: Any,
+    settings: Any,
+    prompt_store: Any,
+    memory_store: Any,
+    current_config: HarnessConfig,
+    candidate_config: HarnessConfig,
+    holdout_tasks: list[str],
+) -> bool:
+    """Pairwise gate for harness configs, mirror of validate_candidate_prompt.
+
+    Runs each held-out task TWICE — once with the current champion harness
+    config, once with the candidate — then asks the pairwise judge which
+    output is better. Promotes only if the candidate wins strict majority.
+
+    Both runs share the same prompt (whatever the prompt store currently
+    serves) so the only thing varying between runs is the harness config.
+    Errors on either side count as a loss for the candidate (defensive —
+    never promote a config that crashes the agent).
+    """
+    from src.evolution.orchestrator import _run_single_task
+    from src.evolution.prompt_optimizer import pairwise_compare
+
+    if not holdout_tasks or len(holdout_tasks) < 2:
+        logger.info(
+            "Harness validation: holdout too small (n=%d), skipping gate "
+            "and accepting candidate",
+            len(holdout_tasks) if holdout_tasks else 0,
+        )
+        return True
+
+    wins_new = 0
+    wins_old = 0
+    errors = 0
+
+    for task in holdout_tasks:
+        # Champion run with current harness
+        old_result = _run_single_task(
+            settings,
+            prompt_store,
+            memory_store,
+            task,
+            harness_override=current_config,
+        )
+        old_output = old_result.get("output", "")
+        if not old_output or old_result.get("status") == "error":
+            errors += 1
+            wins_old += 1
+            continue
+
+        # Candidate run with proposed harness
+        new_result = _run_single_task(
+            settings,
+            prompt_store,
+            memory_store,
+            task,
+            harness_override=candidate_config,
+        )
+        new_output = new_result.get("output", "")
+        if not new_output or new_result.get("status") == "error":
+            errors += 1
+            wins_old += 1
+            continue
+
+        comparison = pairwise_compare(llm, task, old_output, new_output, "old", "new")
+        logger.info(
+            "Pairwise [harness-holdout]: task='%s' winner=%s confidence=%s",
+            task[:50],
+            comparison["winner"],
+            comparison["confidence"],
+        )
+        if comparison["winner"] == "new":
+            wins_new += 1
+        else:
+            wins_old += 1
+
+    logger.info(
+        "Harness pairwise validation: new=%d, old=%d (errors=%d, n=%d)",
+        wins_new,
+        wins_old,
+        errors,
+        len(holdout_tasks),
+    )
+    return wins_new > wins_old
+
+
 def optimize_harness(
     llm: Callable[..., str],
     entries: list[RunLogEntry],
     config_store: HarnessConfigStore,
     trace_fetcher=None,
+    settings: Any = None,
+    prompt_store: Any = None,
+    memory_store: Any = None,
+    holdout_tasks: list[str] | None = None,
 ) -> int:
     """Main entry point: diagnose, collect traces, propose changes, save.
 
     Uses LangSmith traces when available for richer diagnostics,
     falls back to local trace files.
 
-    Returns the new config version number.
+    When ``holdout_tasks`` (≥2) plus ``settings``, ``prompt_store``, and
+    ``memory_store`` are supplied, the proposed config is gated through
+    ``validate_candidate_harness`` — a pairwise comparison against the
+    current champion on the held-out set. Without those, the optimizer
+    falls back to its legacy "blind promote" behavior with a warning.
+
+    Returns the new config version number (or the unchanged current
+    version when validation rejects the proposal).
     """
     current_config = config_store.load_best()
 
@@ -319,12 +416,53 @@ def optimize_harness(
         logger.info("Harness optimizer: no changes proposed")
         return config_store.get_latest_version()
 
-    # Compute average score from entries for the new config
+    # Promotion gate: pairwise validation on the held-out task set.
+    # Mirrors validate_candidate_prompt — both old and new harness configs
+    # are run fresh on the same holdout, with the same prompt, so the only
+    # variable is the harness change.
+    if holdout_tasks and settings is not None and prompt_store is not None and memory_store is not None:
+        is_better = validate_candidate_harness(
+            llm,
+            settings,
+            prompt_store,
+            memory_store,
+            current_config,
+            new_config,
+            holdout_tasks,
+        )
+        if not is_better:
+            logger.info(
+                "Candidate harness lost pairwise validation, keeping current"
+            )
+            return config_store.get_latest_version()
+    else:
+        logger.warning(
+            "Harness validation skipped (no holdout/settings/stores supplied) — "
+            "blindly promoting proposed config. This is the legacy behavior; "
+            "wire holdout_tasks + settings + prompt_store + memory_store through "
+            "to enable the gate."
+        )
+
+    # Compute average score from entries for the new config's running stat
     avg_score = (
         sum(e.average_score for e in entries) / len(entries) if entries else None
     )
 
-    version = config_store.save(new_config, score=avg_score)
+    # Inherit the parent's frozen promotion_score so the new champion has
+    # a stable ratchet baseline.
+    parent_version = config_store.get_latest_version()
+    parent_promotion = None
+    if parent_version > 0:
+        parent_path = config_store._version_path(parent_version)
+        if parent_path.exists():
+            with open(parent_path) as f:
+                parent_promotion = json.load(f).get("promotion_score")
+
+    inherited = parent_promotion if parent_promotion is not None else avg_score
+
+    version = config_store.save(
+        new_config, score=avg_score, promotion_score=inherited
+    )
     logger.info(
         "Harness optimizer saved version %d: %s", version, reasoning[:100]
     )

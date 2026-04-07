@@ -396,6 +396,73 @@ def pairwise_compare(
         return {"winner": label_a, "confidence": "low", "reasoning": f"error: {exc}"}
 
 
+def _validate_on_holdout(
+    llm: BaseChatModel,
+    settings,
+    prompt_store: PromptStore,
+    memory_store,
+    candidate_prompt: str,
+    holdout_tasks: list[str],
+) -> bool:
+    """Pairwise gate run against a stable held-out task set.
+
+    For each held-out task, runs BOTH the current champion and the
+    candidate fresh (with the same harness state), then pairwise compares.
+    This is the apples-to-apples gate: both outputs come from the same
+    cycle and same harness, so the comparison isolates the prompt change.
+
+    The held-out set is sourced from settings.tasks_file (split via
+    ``_split_tasks``) and is stable across cycles, so trends are
+    comparable and the optimizer can't overfit by validating on the
+    exact tasks it generated the candidate against.
+    """
+    from src.evolution.orchestrator import _run_single_task
+
+    wins_new = 0
+    wins_old = 0
+    errors = 0
+
+    for task in holdout_tasks:
+        # Run champion fresh (uses store's current prompt)
+        old_result = _run_single_task(settings, prompt_store, memory_store, task)
+        old_output = old_result.get("output", "")
+        if not old_output or old_result.get("status") == "error":
+            errors += 1
+            wins_old += 1  # treat champion failure as a tie loss for safety
+            continue
+
+        # Run candidate fresh (with prompt override)
+        new_result = _run_single_task(
+            settings, prompt_store, memory_store, task, prompt_override=candidate_prompt
+        )
+        new_output = new_result.get("output", "")
+        if not new_output or new_result.get("status") == "error":
+            errors += 1
+            wins_old += 1
+            continue
+
+        comparison = pairwise_compare(llm, task, old_output, new_output, "old", "new")
+        logger.info(
+            "Pairwise [holdout]: task='%s' winner=%s confidence=%s",
+            task[:50],
+            comparison["winner"],
+            comparison["confidence"],
+        )
+        if comparison["winner"] == "new":
+            wins_new += 1
+        else:
+            wins_old += 1
+
+    logger.info(
+        "Pairwise holdout validation: new=%d, old=%d (errors=%d, n=%d)",
+        wins_new,
+        wins_old,
+        errors,
+        len(holdout_tasks),
+    )
+    return wins_new > wins_old
+
+
 def validate_candidate_prompt(
     llm: BaseChatModel,
     settings,
@@ -403,17 +470,44 @@ def validate_candidate_prompt(
     memory_store,
     candidate_prompt: str,
     analyses: list[AnalysisResult],
+    holdout_tasks: list[str] | None = None,
 ) -> bool:
-    """Check that candidate prompt improves outputs via pairwise comparison."""
+    """Check that candidate prompt improves outputs via pairwise comparison.
+
+    Two evaluation modes:
+
+    1. **Held-out (preferred)** — when ``holdout_tasks`` is provided with
+       at least 2 tasks, both champion and candidate are run fresh on the
+       same held-out set and pairwise compared. This is apples-to-apples,
+       stable across cycles, and not overfit to the optimizer's input.
+
+    2. **Training-batch fallback** — when no holdout set is supplied,
+       picks failing tasks from the current batch and compares the
+       candidate's fresh output against the champion's *historical*
+       output from the original run. This is the legacy behavior and is
+       overfit-prone (the candidate was generated from these exact
+       failures), so it logs a warning when this path runs.
+    """
     from src.evolution.orchestrator import _run_single_task
+
+    # --- Preferred path: held-out validation ---
+    if holdout_tasks and len(holdout_tasks) >= 2:
+        return _validate_on_holdout(
+            llm, settings, prompt_store, memory_store, candidate_prompt, holdout_tasks
+        )
+
+    # --- Fallback: training-batch failures (legacy behavior) ---
+    logger.warning(
+        "Pairwise validation falling back to training-batch failures "
+        "(no holdout set provided). This is overfit-prone — the candidate "
+        "was generated from these exact tasks. Configure settings.tasks_file "
+        "with a populated tasks JSON to enable held-out validation."
+    )
 
     selected = _select_tasks_for_mini_scoring(analyses, max_tasks=2)
     if len(selected) < 2:
         logger.info("Not enough tasks for pairwise validation, accepting candidate")
         return True
-
-    # Temporarily add candidate prompt as latest version
-    prompt_store.add_version(candidate_prompt, score=None)
 
     wins_new = 0
     wins_old = 0
@@ -421,14 +515,16 @@ def validate_candidate_prompt(
     for analysis in selected:
         task = analysis["task"]
         old_output = analysis["output"]
-        result = _run_single_task(settings, prompt_store, memory_store, task)
+        result = _run_single_task(
+            settings, prompt_store, memory_store, task, prompt_override=candidate_prompt
+        )
         new_output = result.get("output", "")
         if not new_output or result.get("status") == "error":
             wins_old += 1
             continue
         comparison = pairwise_compare(llm, task, old_output, new_output, "old", "new")
         logger.info(
-            "Pairwise: task='%s' winner=%s confidence=%s",
+            "Pairwise [batch-fallback]: task='%s' winner=%s confidence=%s",
             task[:50],
             comparison["winner"],
             comparison["confidence"],
@@ -450,6 +546,7 @@ def optimize_prompt(
     settings=None,
     memory_store=None,
     trace_fetcher=None,
+    holdout_tasks: list[str] | None = None,
 ) -> int:
     """Run the full prompt optimization pipeline.
 
@@ -459,6 +556,10 @@ def optimize_prompt(
         analyses: Analysis results from the current cycle
         skills_dir: Optional path to skills directory for skill-aware optimization
         trace_fetcher: Optional TraceFetcher for rich LangSmith traces
+        holdout_tasks: Optional stable held-out task list. When provided
+            (≥2 tasks), the pairwise gate runs both champion and candidate
+            fresh on this set instead of comparing against current-batch
+            failure outputs. Strongly preferred — see validate_candidate_prompt.
 
     Returns:
         New prompt version number
@@ -495,6 +596,7 @@ def optimize_prompt(
             memory_store,
             improved_prompt,
             analyses,
+            holdout_tasks=holdout_tasks,
         )
         if not is_better:
             logger.info("Candidate prompt lost pairwise validation, keeping current")
@@ -505,11 +607,25 @@ def optimize_prompt(
     parent_version = prompt_store.get_latest_version_number()
     feedback_summary = json.dumps(failure_info["common_issues"][:5])
 
+    # Inherit the parent's frozen promotion_score so the new champion has
+    # a stable baseline for the ratchet. The new version just won pairwise
+    # validation against the parent, so the parent's promotion_score is the
+    # safest floor we can claim without re-running a held-out eval. If the
+    # parent has no promotion_score (e.g. seeded baseline), we fall back to
+    # the current batch average.
+    parent = prompt_store.get_version(parent_version) if parent_version else None
+    inherited = (
+        parent.promotion_score
+        if parent and parent.promotion_score is not None
+        else current_score
+    )
+
     new_version = prompt_store.add_version(
         prompt=improved_prompt,
         score=None,
         parent_version=parent_version,
         feedback_summary=feedback_summary,
+        promotion_score=inherited,
     )
 
     logger.info(

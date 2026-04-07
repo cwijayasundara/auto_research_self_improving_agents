@@ -87,34 +87,61 @@ class HarnessConfigStore:
             return 0
         return all_versions[-1]["version"]
 
-    def save(self, config: HarnessConfig, score: float | None = None) -> int:
+    def save(
+        self,
+        config: HarnessConfig,
+        score: float | None = None,
+        promotion_score: float | None = None,
+    ) -> int:
+        """Save a new harness config version.
+
+        Sets the frozen ``promotion_score`` from the explicit
+        ``promotion_score`` arg if provided, otherwise from ``score``.
+        Once written, ``promotion_score`` is never modified by
+        ``update_score`` — it is the stable baseline used by the ratchet
+        to compare champions across versions.
+        """
         version = self.get_latest_version() + 1
+        frozen = promotion_score if promotion_score is not None else score
         data = {
             "version": version,
             "config": config.to_dict(),
             "score": round(score, 4) if score is not None else None,
             "score_count": 1 if score is not None else 0,
+            "promotion_score": round(frozen, 4) if frozen is not None else None,
             "timestamp": datetime.now(UTC).isoformat(),
         }
         path = self._version_path(version)
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
-        logger.info("Saved harness config version %d (score=%s)", version, score)
+        logger.info(
+            "Saved harness config version %d (score=%s, promotion_score=%s)",
+            version,
+            score,
+            frozen,
+        )
         return version
 
     def load_best(self) -> HarnessConfig:
+        """Return the current champion harness config — the LATEST version.
+
+        This is the ratchet: promotions only move forward. The active
+        config is whichever was promoted most recently. We do NOT select
+        by max-score, because doing so would let observed-score drift
+        silently roll the active config back to an older version.
+        """
         all_versions = self._load_all()
         if not all_versions:
             return HarnessConfig()
-        scored = [v for v in all_versions if v.get("score") is not None]
-        if scored:
-            best = max(scored, key=lambda v: v["score"])
-        else:
-            best = all_versions[-1]
-        return HarnessConfig.from_dict(best["config"])
+        return HarnessConfig.from_dict(all_versions[-1]["config"])
 
     def update_score(self, version: int, score: float) -> None:
-        """Update score using incremental averaging."""
+        """Update the running observed score for a harness config version.
+
+        Uses incremental averaging. Touches ONLY ``score``, never
+        ``promotion_score`` — the latter is frozen at promotion time and
+        is the stable baseline for the ratchet.
+        """
         path = self._version_path(version)
         if not path.exists():
             logger.warning("Cannot update score: version %d not found", version)
@@ -135,6 +162,7 @@ class HarnessConfigStore:
             data["score"] = round(new_score, 4)
             data["score_count"] = n
 
+        # promotion_score is frozen — never touched here.
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         logger.info(

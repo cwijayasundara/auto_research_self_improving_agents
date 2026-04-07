@@ -1,7 +1,27 @@
 """Versioned prompt persistence.
 
 Stores prompt versions as JSON files in the prompts/ directory.
-Supports version history, scoring, and rollback.
+
+Implements a Karpathy-style "ratchet" where promotion is monotonic:
+
+- ``promotion_score`` is FROZEN at promotion time. It is set when a new
+  version is added (typically inherited from the parent's promotion score,
+  since the new version just won pairwise validation against it). Once set,
+  it never changes.
+- ``score`` is the running observation: an incremental average of post-
+  promotion run scores. It can drift up or down with new runs and is used
+  by the optimizer to decide *when* to try optimizing, but it is NOT used
+  to decide which version is "current".
+- The active version is always the LATEST version (highest version number),
+  period. Promotions only move forward. The system never silently rolls
+  back to an older version because new runs happened to drag the current
+  version's running average below an older version's.
+
+This closes three leaks in the previous implementation:
+1. Score dilution dragging a champion below an older version's frozen score.
+2. ``get_current_prompt`` selecting on a moving target (the running average).
+3. Bad runs (or bugs producing phantom signal) silently changing which
+   version is active without any optimizer involvement.
 """
 
 import json
@@ -24,10 +44,14 @@ class PromptVersion:
         timestamp: str | None = None,
         parent_version: int | None = None,
         feedback_summary: str = "",
+        promotion_score: float | None = None,
     ) -> None:
         self.version = version
         self.prompt = prompt
+        # Running observation; mutated by update_score
         self.score = score
+        # Frozen promotion baseline; set once at add_version time
+        self.promotion_score = promotion_score
         self.timestamp = timestamp or datetime.now(UTC).isoformat()
         self.parent_version = parent_version
         self.feedback_summary = feedback_summary
@@ -37,6 +61,7 @@ class PromptVersion:
             "version": self.version,
             "prompt": self.prompt,
             "score": self.score,
+            "promotion_score": self.promotion_score,
             "timestamp": self.timestamp,
             "parent_version": self.parent_version,
             "feedback_summary": self.feedback_summary,
@@ -48,6 +73,7 @@ class PromptVersion:
             version=data["version"],
             prompt=data["prompt"],
             score=data.get("score"),
+            promotion_score=data.get("promotion_score"),
             timestamp=data.get("timestamp"),
             parent_version=data.get("parent_version"),
             feedback_summary=data.get("feedback_summary", ""),
@@ -83,14 +109,17 @@ class PromptStore:
         return PromptVersion.from_dict(data)
 
     def get_current_prompt(self) -> str:
-        """Return the best-scoring prompt, or the latest if no scores exist."""
+        """Return the LATEST prompt version (the current champion).
+
+        This is the ratchet: promotions only move forward. The active
+        version is whichever was promoted most recently, period. We do NOT
+        select by max-score across versions, because doing so would let
+        running-average drift on the current champion silently roll the
+        active version back to an older one.
+        """
         versions = self.get_all_versions()
         if not versions:
             return ""
-        scored = [v for v in versions if v.score is not None]
-        if scored:
-            best = max(scored, key=lambda v: v.score)  # type: ignore[arg-type]
-            return best.prompt
         return versions[-1].prompt
 
     def get_latest_version_number(self) -> int:
@@ -106,28 +135,47 @@ class PromptStore:
         score: float | None = None,
         parent_version: int | None = None,
         feedback_summary: str = "",
+        promotion_score: float | None = None,
     ) -> PromptVersion:
-        """Add a new prompt version."""
+        """Add a new prompt version.
+
+        Sets the frozen ``promotion_score`` from the explicit
+        ``promotion_score`` arg if provided, otherwise from ``score``.
+        Once written, ``promotion_score`` is never modified — only
+        ``update_score`` runs, and that only touches the running ``score``.
+        """
         version = self.get_latest_version_number() + 1
+        frozen = promotion_score if promotion_score is not None else score
         pv = PromptVersion(
             version=version,
             prompt=prompt,
             score=score,
+            promotion_score=frozen,
             parent_version=parent_version,
             feedback_summary=feedback_summary,
         )
         path = self._version_path(version)
+        data = pv.to_dict()
+        if score is not None:
+            data["score_count"] = 1
         with open(path, "w") as f:
-            json.dump(pv.to_dict(), f, indent=2)
-        logger.info("Saved prompt version %d (score=%s)", version, score)
+            json.dump(data, f, indent=2)
+        logger.info(
+            "Saved prompt version %d (score=%s, promotion_score=%s)",
+            version,
+            score,
+            frozen,
+        )
         return pv
 
     def update_score(self, version: int, score: float) -> None:
-        """Update the score for an existing prompt version.
+        """Update the running observed score for an existing prompt version.
 
         Uses incremental averaging: new_avg = old_avg + (score - old_avg) / n.
-        This way every run contributes to the prompt's score without needing
-        to store all individual scores.
+        This is the running observation that lets the optimizer notice when
+        a champion is degrading. It is intentionally separate from
+        ``promotion_score``, which is frozen at promotion time and used for
+        comparing champions across versions on a stable baseline.
         """
         pv = self.get_version(version)
         if pv is None:
@@ -149,6 +197,7 @@ class PromptStore:
 
         data["score"] = round(pv.score, 4)
         data["score_count"] = n
+        # promotion_score is frozen — never touched here.
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         logger.info("Updated score for version %d to %.4f (n=%d)", version, pv.score, n)

@@ -25,6 +25,7 @@ traces/
 evolution_state/
 skills/
 !evoagent/skills/
+harness_config/
 
 # Keep task files and results
 !tasks/

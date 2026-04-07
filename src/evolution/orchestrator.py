@@ -63,13 +63,27 @@ def _run_single_task(
     prompt_store: PromptStore,
     memory_store: FileMemoryStore,
     task: str,
+    prompt_override: str | None = None,
+    harness_override: Any = None,
 ) -> dict[str, Any]:
     """Run the agent on a single task and return the result.
 
     Includes a timeout so a hung agent cannot block the entire pipeline.
     Also captures basic timing metrics for the efficiency grader.
+
+    If ``prompt_override`` is supplied, it is forwarded to create_agent so
+    the run uses an unsaved candidate prompt instead of the prompt store's
+    current selection. ``harness_override`` does the same for harness
+    config — both used by pairwise validation gates.
     """
-    agent = create_agent(settings, prompt_store, memory_store, task=task)
+    agent = create_agent(
+        settings,
+        prompt_store,
+        memory_store,
+        task=task,
+        prompt_override=prompt_override,
+        harness_override=harness_override,
+    )
     start = time.monotonic()
     try:
         # Run with timeout using a thread pool

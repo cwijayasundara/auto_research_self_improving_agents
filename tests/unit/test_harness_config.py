@@ -71,14 +71,21 @@ class TestHarnessConfigStore:
             loaded = store.load_best()
             assert loaded.max_retries == 5
 
-    def test_load_best_returns_highest_score(self):
+    def test_load_best_returns_latest_version_ignoring_scores(self):
+        """Ratchet semantics: the active config is the LATEST version, period.
+
+        Even if an older version has a higher running score, the latest
+        promoted version remains active. This prevents observed-score drift
+        from silently rolling the active config back to an older one.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             store = HarnessConfigStore(Path(tmp) / "configs")
             store.save(HarnessConfig(max_retries=1), score=0.5)
             store.save(HarnessConfig(max_retries=2), score=0.9)
             store.save(HarnessConfig(max_retries=3), score=0.7)
             best = store.load_best()
-            assert best.max_retries == 2
+            # v3 is latest → active, even though v2 has the highest score.
+            assert best.max_retries == 3
 
     def test_load_best_returns_latest_when_unscored(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -88,6 +95,43 @@ class TestHarnessConfigStore:
             store.save(HarnessConfig(max_retries=3))
             best = store.load_best()
             assert best.max_retries == 3
+
+    def test_promotion_score_is_frozen_under_observed_drift(self):
+        """The frozen promotion_score must NOT change when update_score
+        runs. Only the running ``score`` field drifts."""
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HarnessConfigStore(Path(tmp) / "configs")
+            store.save(HarnessConfig(), score=0.8)
+
+            # Hammer it with bad observed scores
+            for bad in [0.3, 0.2, 0.4, 0.25, 0.35]:
+                store.update_score(1, bad)
+
+            data = json.loads((Path(tmp) / "configs" / "v0001.json").read_text())
+            assert data["promotion_score"] == 0.8, (
+                "promotion_score must remain 0.8 even after observed drift"
+            )
+            # Running score should have moved (the optimizer's signal)
+            assert data["score"] < 0.6
+            # And promotion_score is the ONLY thing the active selector sees
+            # (well, indirectly via the latest-version rule).
+
+    def test_promotion_score_inherited_from_explicit_arg(self):
+        """When save() is called with an explicit promotion_score that
+        differs from the running score, the explicit value wins."""
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store = HarnessConfigStore(Path(tmp) / "configs")
+            # First version: baseline
+            store.save(HarnessConfig(), score=0.8)
+            # Second version: optimizer wants this version's frozen baseline
+            # to inherit the parent's 0.8 even though current batch was 0.5
+            store.save(HarnessConfig(max_retries=5), score=0.5, promotion_score=0.8)
+
+            v2 = json.loads((Path(tmp) / "configs" / "v0002.json").read_text())
+            assert v2["promotion_score"] == 0.8
+            assert v2["score"] == 0.5
 
     def test_update_score_incremental(self):
         with tempfile.TemporaryDirectory() as tmp:
